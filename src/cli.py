@@ -10,12 +10,15 @@ from rich.text import Text
 from rich.align import Align
 from rich.prompt import Confirm, Prompt
 import json
+import logging
+import yaml
 
 from .core.analysis_engine import AnalysisEngine
 from .analyzers.analyzer import IssueSeverity
 
 
 console = Console()
+logger = logging.getLogger(__name__)
 
 
 def show_banner():
@@ -23,12 +26,12 @@ def show_banner():
     banner = """
     ╔═══════════════════════════════════════════════╗
     ║                                               ║
-    ║     ░█████╗░░█████╗░██████╗░███████╗████████╗ ║
-    ║     ██╔══██╗██╔══██╗██╔══██╗██╔════╝╚══██╔══╝ ║
-    ║     ██║░░╚═╝██║░░██║██║░░██║█████╗░░░░░██║░░░ ║
-    ║     ██║░░██╗██║░░██║██║░░██║██╔══╝░░░░░██║░░░ ║
-    ║     ╚█████╔╝╚█████╔╝██████╔╝███████╗░░░██║░░░ ║
-    ║     ░╚════╝░░╚════╝░╚═════╝░╚══════╝░░░╚═╝░░░ ║
+    ║   ░█████╗░░█████╗░██████╗░███████╗████████╗   ║
+    ║   ██╔══██╗██╔══██╗██╔══██╗██╔════╝╚══██╔══╝   ║
+    ║   ██║░░╚═╝██║░░██║██║░░██║█████╗░░░░░██║░░░   ║
+    ║   ██║░░██╗██║░░██║██║░░██║██╔══╝░░░░░██║░░░   ║
+    ║   ╚█████╔╝╚█████╔╝██████╔╝███████╗░░░██║░░░   ║
+    ║   ░╚════╝░░╚════╝░╚═════╝░╚══════╝░░░╚═╝░░░   ║
     ║                                               ║
     ║       🔍 Code Quality Intelligence Tool 🔍    ║
     ║                                               ║
@@ -252,35 +255,48 @@ def _display_console_report(result):
     
     console.print(summary_table)
     
-    # Top issues with better styling
+    # All issues with better styling  
     if result.issues:
-        console.print("\n[bold magenta]🔍 Top Issues:[/bold magenta]")
+        console.print(f"\n[bold magenta]🔍 All Issues Found ({len(result.issues)} total):[/bold magenta]")
         
-        issues_table = Table(show_header=True, header_style="bold magenta", box=None)
-        issues_table.add_column("🚨 Severity", width=12)
-        issues_table.add_column("📂 Category", width=18)
-        issues_table.add_column("📄 File", width=35)
-        issues_table.add_column("💬 Issue", width=50)
+        # Group issues by severity for better organization
+        issues_by_severity = {}
+        for issue in result.issues:
+            severity = issue.severity.value
+            if severity not in issues_by_severity:
+                issues_by_severity[severity] = []
+            issues_by_severity[severity].append(issue)
         
-        # Show top 10 issues with icons
-        for issue in result.issues[:10]:
-            severity_color = severity_colors.get(issue.severity.value, 'white')
-            icon = severity_icons.get(issue.severity.value, '📌')
-            file_name = issue.file_path.name
-            if issue.line_number:
-                file_name += f":[bold]{issue.line_number}[/bold]"
+        # Display issues grouped by severity
+        for severity in ['critical', 'high', 'medium', 'low', 'info']:
+            if severity not in issues_by_severity or not issues_by_severity[severity]:
+                continue
+                
+            severity_color = severity_colors.get(severity, 'white')
+            icon = severity_icons.get(severity, '📌')
             
-            issues_table.add_row(
-                f"{icon} [{severity_color}]{issue.severity.value.upper()}[/{severity_color}]",
-                f"[dim]{issue.category.value}[/dim]",
-                f"[italic]{file_name}[/italic]",
-                Text(issue.title, overflow="ellipsis")
-            )
-        
-        console.print(issues_table)
-        
-        if len(result.issues) > 10:
-            console.print(f"\n[dim]... and {len(result.issues) - 10} more issues[/dim]")
+            console.print(f"\n[{severity_color}]{icon} {severity.upper()} ({len(issues_by_severity[severity])} issues)[/{severity_color}]")
+            console.print("-" * 80)
+            
+            issues_table = Table(show_header=True, header_style=f"bold {severity_color}", box=None)
+            issues_table.add_column("📂 Category", width=15)
+            issues_table.add_column("📄 File", width=30)
+            issues_table.add_column("💬 Issue", width=40)
+            issues_table.add_column("💡 Suggestion", width=35)
+            
+            for issue in issues_by_severity[severity]:
+                file_name = issue.file_path.name
+                if issue.line_number:
+                    file_name += f":[bold]{issue.line_number}[/bold]"
+                
+                issues_table.add_row(
+                    f"[dim]{issue.category.value}[/dim]",
+                    f"[italic]{file_name}[/italic]",
+                    Text(issue.title, overflow="fold"),
+                    Text(issue.suggestion or "N/A", overflow="fold", style="dim")
+                )
+            
+            console.print(issues_table)
 
 
 @main.command()
@@ -314,110 +330,142 @@ def serve(host, port):
 
 
 @main.command()
-def interactive():
-    """🎯 Interactive mode - Analyze with a guided experience
+@click.argument('path', type=click.Path(exists=True), required=False)
+@click.option('--config', '-c', type=click.Path(exists=True), help='⚙️  Configuration file path')
+@click.option('--use-local', is_flag=True, help='🏠 Use local Ollama LLM instead of Google Gemini')
+@click.option('--ollama-model', default='llama3.2', help='🤖 Ollama model to use (default: llama3.2)')
+def chat(path, config, use_local, ollama_model):
+    """💬 Chat with your codebase - Ask questions and get AI-powered answers
     
-    Step-by-step analysis with prompts and suggestions!
+    Have a conversation with your code! Ask questions about architecture,
+    functionality, or get help understanding any part of your codebase.
+
     """
-    console.print()
-    console.print(Panel(
-        "[bold cyan]🎯 Welcome to Codet Interactive Mode![/bold cyan]\n\n"
-        "I'll guide you through analyzing your codebase step by step.",
-        title="[bold]Interactive Analysis[/bold]",
-        border_style="cyan",
-        padding=(1, 2)
-    ))
-    console.print()
+    import asyncio
+    from .core.orchestrator_engine import OrchestratorEngine
     
-    # Get path interactively
-    path = Prompt.ask("📁 Enter the path to analyze", default=".")
+    # Get path if not provided
+    if not path:
+        path = Prompt.ask("📁 Enter the path to analyze", default=".")
     path = Path(path)
     
     if not path.exists():
         console.print(f"[red]❌ Error: Path '{path}' does not exist![/red]")
         return
     
-    # Ask about languages
-    console.print("\n[bold]🗣️  Language Detection[/bold]")
-    auto_detect = Confirm.ask("Should I auto-detect languages?", default=True)
-    
-    # Ask about AI analysis
-    console.print("\n[bold]🤖 AI Analysis[/bold]")
-    enable_ai = Confirm.ask("Enable AI-powered analysis?", default=True)
-    
-    use_local = False
-    ollama_model = "llama3.2"
-    config_path = None
-    
-    if enable_ai:
-        # Ask about local vs cloud LLM
-        use_local = Confirm.ask("Use local Ollama LLM instead of Google Gemini?", default=False)
-        
-        if use_local:
-            ollama_model = Prompt.ask("Ollama model to use", default="llama3.2")
-            console.print(f"[green]✓ Will use local Ollama model: {ollama_model}[/green]")
-        
-        use_config = Confirm.ask("Do you have a configuration file?", default=False)
-        if use_config:
-            config_path = Prompt.ask("Configuration file path")
-            config_path = Path(config_path)
-            if not config_path.exists():
-                console.print(f"[yellow]⚠️  Warning: Config file not found. Using defaults.[/yellow]")
-                config_path = None
-    
-    # Ask about output format
-    console.print("\n[bold]📊 Output Options[/bold]")
-    save_report = Confirm.ask("Save report to file?", default=False)
-    
-    output_file = None
-    output_format = "console"
-    if save_report:
-        output_format = Prompt.ask(
-            "Output format",
-            choices=["json", "html"],
-            default="json"
-        )
-        output_file = Prompt.ask(
-            "Output file name",
-            default=f"codet_report.{output_format}"
-        )
-    
-    # Confirm and run analysis
+    # Show chat interface
     console.print()
-    llm_info = ""
-    if enable_ai:
-        if use_local:
-            llm_info = f"\n🏠 LLM Mode: Local (Ollama - {ollama_model})"
-        else:
-            llm_info = "\n☁️  LLM Mode: Cloud (Google Gemini)"
-    
     console.print(Panel(
-        f"[bold]Ready to analyze![/bold]\n\n"
-        f"📁 Path: {path.absolute()}\n"
-        f"🤖 AI Analysis: {'Enabled' if enable_ai else 'Disabled'}{llm_info}\n"
-        f"📊 Output: {output_format}" + (f" → {output_file}" if output_file else ""),
-        title="[bold]Confirmation[/bold]",
-        border_style="green",
+        "[bold cyan]💬 Welcome to Codet Chat Mode![/bold cyan]\n\n"
+        f"📁 Repository: [bold]{path.absolute()}[/bold]\n"
+        f"🤖 LLM Mode: [bold]{'Local (Ollama)' if use_local else 'Cloud (Google Gemini)'}[/bold]\n\n"
+        "[dim]Type 'exit' or 'quit' to end the conversation[/dim]",
+        title="[bold]Chat Interface[/bold]",
+        border_style="cyan",
         padding=(1, 2)
     ))
     console.print()
     
-    if not Confirm.ask("Proceed with analysis?", default=True):
-        console.print("[yellow]Analysis cancelled.[/yellow]")
-        return
+    # Initialize chat engine
+    with Progress(
+        SpinnerColumn(style="cyan"),
+        TextColumn("[bold cyan]{task.description}[/bold cyan]"),
+        console=console,
+        transient=True
+    ) as progress:
+        task = progress.add_task("🚀 Initializing chat engine...", total=100)
+        
+        chat_engine = OrchestratorEngine(mode="chat")
+        progress.update(task, advance=50)
+        
+        # Create temporary config with local LLM settings if needed
+        if use_local:
+            import tempfile
+            import yaml
+            
+            # Load existing config or create new one
+            config_data = {}
+            if config:
+                with open(config, 'r') as f:
+                    config_data = yaml.safe_load(f) or {}
+            
+            # Update with local LLM settings
+            if 'agent' not in config_data:
+                config_data['agent'] = {}
+            config_data['agent']['use_local'] = True
+            config_data['agent']['ollama_model'] = ollama_model
+            
+            # Write temporary config
+            with tempfile.NamedTemporaryFile(mode='w', suffix='.yaml', delete=False) as f:
+                yaml.dump(config_data, f)
+                temp_config_path = f.name
+            
+            config_path = Path(temp_config_path)
+        else:
+            config_path = Path(config) if config else None
+        
+        chat_engine.initialize_agents(config_path)
+        progress.update(task, advance=50)
+        progress.update(task, completed=100)
+        
+        # Clean up temporary config file if created
+        if use_local and 'temp_config_path' in locals():
+            import os
+            try:
+                os.unlink(temp_config_path)
+            except:
+                pass
     
-    # Run the analysis
-    ctx = click.get_current_context()
-    ctx.invoke(
-        analyze,
-        path=str(path),
-        output=output_file,
-        format=output_format,
-        ai=enable_ai,
-        config=str(config_path) if config_path else None,
-        use_local=use_local,
-        ollama_model=ollama_model
-    )
+    console.print("[green]✅ Chat engine ready! Ask me anything about your codebase.[/green]\n")
+    
+    # Create and persist a single event loop for the chat session
+    import asyncio
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+
+    # Chat loop
+    while True:
+        # Get user question
+        question = Prompt.ask("[bold cyan]You[/bold cyan]")
+        
+        # Check for exit commands
+        if question.lower() in ['exit', 'quit', 'bye', 'q']:
+            console.print("\n[yellow]👋 Thanks for chatting! Goodbye![/yellow]")
+            break
+        
+        # Process the question
+        console.print()
+        with Progress(
+            SpinnerColumn(style="cyan"),
+            TextColumn("[bold cyan]🤔 Thinking...[/bold cyan]"),
+            console=console,
+            transient=True
+        ) as progress:
+            task = progress.add_task("Analyzing codebase...", total=None)
+            
+            try:
+                # Get answer using the persistent loop
+                answer = loop.run_until_complete(chat_engine.answer_question(
+                    question=question,
+                    path=path
+                ))
+                
+                # Show analyzed files
+                if chat_engine.analyzed_files:
+                    console.print(f"\n[dim]📂 Analyzed {len(chat_engine.analyzed_files)} files[/dim]")
+                
+                # Display answer
+                console.print(f"\n[bold green]Codet[/bold green]: {answer}\n")
+                
+            except Exception as e:
+                console.print(f"\n[red]❌ Error: {str(e)}[/red]\n")
+                logger.error(f"Chat error: {e}", exc_info=True)
+
+    # Gracefully shutdown the event loop after chat session ends
+    try:
+        loop.run_until_complete(loop.shutdown_asyncgens())
+    finally:
+        loop.close()
 
 
 if __name__ == '__main__':

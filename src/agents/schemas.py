@@ -47,6 +47,13 @@ class AnalysisResponseSchema(BaseModel):
     summary: Optional[Dict[str, Any]] = Field(None, description="Summary of the analysis")
 
 
+class ChatResponseSchema(BaseModel):
+    """Schema for chat mode responses"""
+    answer: str = Field(description="The answer to the user's question about the codebase")
+    files_to_analyze: Optional[List[str]] = Field(None, description="Files that need to be analyzed to answer the question")
+    analysis_complete: bool = Field(False, description="Whether the analysis is complete and ready to provide final answer")
+
+
 class FileAnalysisRequestSchema(BaseModel):
     """Schema for file analysis requests"""
     file_path: str = Field(description="Path to the file to analyze")

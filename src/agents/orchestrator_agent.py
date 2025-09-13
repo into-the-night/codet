@@ -7,7 +7,7 @@ from pathlib import Path
 from datetime import datetime
 
 from .base_agent import BaseAgent
-from .schemas import AnalysisResponseSchema, CodeIssueSchema
+from .schemas import AnalysisResponseSchema, CodeIssueSchema, ChatResponseSchema
 from ..core.config import AgentConfig
 from ..analyzers.analyzer import CodeIssue, IssueCategory, IssueSeverity
 
@@ -26,6 +26,7 @@ class OrchestratorAgent(BaseAgent):
         self.mode = mode  # 'analysis' or 'chat'
         self.custom_system_prompt = custom_system_prompt  # Allow custom prompts
         self.user_question = None  # Store user question for chat mode
+        self.chat_answer = None  # Store final answer for chat mode
         
         self.analyze_file_function = {
             "name": "analyze_file",
@@ -74,6 +75,26 @@ class OrchestratorAgent(BaseAgent):
                     }
                 },
                 "required": ["files"]
+            }
+        }
+        
+        # Utility: ask a focused question about a specific file (chat)
+        self.query_file_function = {
+            "name": "query_file",
+            "description": "Answer a specific question about a file by reading its content and returning a concise, source-grounded answer.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "file_path": {
+                        "type": "string",
+                        "description": "Path to the file, relative to the repository root."
+                    },
+                    "question": {
+                        "type": "string",
+                        "description": "The user's question to answer about this file."
+                    }
+                },
+                "required": ["file_path", "question"]
             }
         }
         
@@ -262,42 +283,77 @@ After analyzing relevant files, provide a comprehensive answer that directly add
                 logger.info(f"Available functions for orchestrator: {list(self.function_handlers.keys())}")
                 
                 # Add explicit instruction about using functions
-                function_prompt = prompt + "\n\nIMPORTANT: You have access to two functions:\n1. analyze_file(file_path, analysis_focus) - for single file\n2. analyze_files_batch(files) - for multiple files\n\nUse these functions to analyze files. DO NOT return file lists in your response. Only return {\"issues\": [...]} after analysis."
+                if self.mode == "chat":
+                    function_prompt = (
+                        prompt
+                        + "\n\nIMPORTANT: You have access to these functions:\n"
+                        + "1. query_file(file_path, question) - answer a focused question about a single file (preferred)\n"
+                        + "2. analyze_file(file_path, analysis_focus) - deep code-quality analysis when necessary\n"
+                        + "3. analyze_files_batch(files) - analyze multiple files in parallel if needed\n\n"
+                        + "Strategy: Prefer query_file on the most relevant file to directly answer the user's question with citations. Use read_file for quick context and analyze_file only when a deeper quality review is needed. Return the structured response and set analysis_complete=true when ready to answer."
+                    )
+                else:
+                    function_prompt = (
+                        prompt
+                        + "\n\nIMPORTANT: You have access to these functions:\n"
+                        + "1. analyze_file(file_path, analysis_focus) - for single file\n"
+                        + "2. analyze_files_batch(files) - for multiple files\n\n"
+                        + "Use these functions to analyze files. Do NOT return file lists in your response. Only return {\"issues\": [...]} after analysis."
+                    )
                 
                 # Log handlers right before passing them
                 logger.info(f"Passing function handlers to generate_structured_response_with_functions: {list(self.function_handlers.keys())}")
                 for handler_name, handler_func in self.function_handlers.items():
                     logger.info(f"  {handler_name}: {'SET' if handler_func is not None else 'NOT SET'}")
                 
+                # Choose the appropriate schema based on mode
+                response_schema = ChatResponseSchema if self.mode == "chat" else AnalysisResponseSchema
+                
                 # Generate response with function calling
                 response = await self.generate_structured_response_with_functions(
                     prompt=function_prompt,
-                    response_schema=AnalysisResponseSchema,
-                    function_declarations=[self.analyze_file_function, self.analyze_files_batch_function],
+                    response_schema=response_schema,
+                    function_declarations=[
+                        self.query_file_function,
+                        self.analyze_file_function,
+                        self.analyze_files_batch_function,
+                    ],
                     function_handlers=self.function_handlers,
                     context={
                         'iteration': self.current_iteration,
                         'analyzed_files_count': len(self.analyzed_files),
-                        'total_files': tree_data['statistics']['total_files']
+                        'total_files': tree_data['statistics']['total_files'],
+                        'mode': self.mode
                     }
                 )
                 
-                # Check if we got issues from the analysis
-                if hasattr(response, 'issues') and response.issues:
-                    # Convert to CodeIssue objects and store
-                    issues = self._convert_to_code_issues(response.issues, root_path)
-                    self.analysis_results.extend(issues)
-                    logger.info(f"Found {len(issues)} issues in iteration {self.current_iteration}")
-                    
-                    # Update prompt for next iteration
-                    if self.mode == "chat" and user_question:
-                        prompt = self._build_chat_iteration_prompt(user_question, tree_data, root_path)
+                # Handle response based on mode
+                if self.mode == "chat":
+                    # Chat mode - check if analysis is complete
+                    if hasattr(response, 'analysis_complete') and response.analysis_complete:
+                        # Store the final answer
+                        self.chat_answer = response.answer
+                        logger.info("Chat analysis complete")
+                        break
                     else:
-                        prompt = self._build_iteration_prompt(tree_data, root_path)
+                        # Continue analyzing files if needed
+                        if hasattr(response, 'files_to_analyze') and response.files_to_analyze:
+                            logger.info(f"Chat mode: Need to analyze {len(response.files_to_analyze)} more files")
+                        prompt = self._build_chat_iteration_prompt(user_question, tree_data, root_path)
                 else:
-                    # No more issues found, analysis complete
-                    logger.info("Orchestration complete - no more issues found")
-                    break
+                    # Analysis mode - check for issues
+                    if hasattr(response, 'issues') and response.issues:
+                        # Convert to CodeIssue objects and store
+                        issues = self._convert_to_code_issues(response.issues, root_path)
+                        self.analysis_results.extend(issues)
+                        logger.info(f"Found {len(issues)} issues in iteration {self.current_iteration}")
+                        
+                        # Update prompt for next iteration
+                        prompt = self._build_iteration_prompt(tree_data, root_path)
+                    else:
+                        # No more issues found, analysis complete
+                        logger.info("Orchestration complete - no more issues found")
+                        break
                     
             except Exception as e:
                 logger.error(f"Error in orchestration iteration {self.current_iteration}: {e}")
@@ -318,10 +374,14 @@ After analyzing relevant files, provide a comprehensive answer that directly add
         
         # Return based on mode
         if self.mode == "chat":
-            # Generate final answer for chat mode
-            answer = await self._generate_chat_answer(user_question, all_issues, tree_data, root_path)
-            logger.info(f"Chat orchestration complete: {len(self.analyzed_files)} files analyzed")
-            return answer
+            # Return the stored chat answer
+            if self.chat_answer:
+                logger.info(f"Chat orchestration complete: {len(self.analyzed_files)} files analyzed")
+                return self.chat_answer
+            else:
+                # Fallback: generate a simple answer if no answer was stored
+                logger.warning("No chat answer stored, generating fallback answer")
+                return f"I analyzed {len(self.analyzed_files)} files but couldn't generate a complete answer. Please try rephrasing your question."
         else:
             logger.info(f"Analysis orchestration complete: {len(all_issues)} total issues found")
             return all_issues
@@ -557,7 +617,7 @@ ANALYZED FILES:
 Continue analyzing additional files that might contain relevant information for answering the user's question.
 
 If you believe you have sufficient information to answer the user's question comprehensively, return:
-{"issues": []}
+{{"issues": []}}
 
 REMEMBER: Use function calls to analyze files, do NOT return file lists directly."""
         

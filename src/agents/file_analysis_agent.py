@@ -66,6 +66,54 @@ Be thorough but focused - prioritize high-impact issues that affect security, pe
     def agent_name(self) -> str:
         return "file_analysis_agent"
     
+    async def answer_file_query(self, file_path: str,
+                               root_path: Path,
+                               question: str,
+                               repository_context: Optional[Dict[str, Any]] = None) -> str:
+        """Answer a focused question about a specific file by reading its content.
+
+        Returns a concise, source-grounded answer. If the answer cannot be determined
+        from the file, explicitly state that it's not present.
+        """
+        logger.info(f"Answering file query for: {file_path} (question: {question[:80]}...) ")
+
+        full_path = root_path / file_path
+        if not full_path.exists() or not full_path.is_file():
+            return f"File not found: {file_path}"
+
+        try:
+            # Read file content
+            with open(full_path, 'r', encoding='utf-8') as f:
+                content = f.read()
+
+            # Truncate very long files by lines to keep context sensible
+            lines = content.splitlines()
+            truncated = False
+            if len(lines) > self.max_lines:
+                content = '\n'.join(lines[:self.max_lines])
+                truncated = True
+
+            prompt = self._build_file_query_prompt(
+                file_path=file_path,
+                content=content,
+                question=question,
+                repository_context=repository_context,
+                truncated=truncated,
+            )
+
+            answer = await self.generate_response(
+                prompt=prompt,
+                context={
+                    'file_path': file_path,
+                    'analysis_type': 'file_query',
+                    'question_len': len(question),
+                }
+            )
+            return answer
+        except Exception as e:
+            logger.error(f"Error answering file query for {file_path}: {e}")
+            return f"Error reading or analyzing {file_path}: {e}"
+
     async def analyze_file(self, file_path: str, 
                           root_path: Path,
                           analysis_focus: str = "general",
@@ -202,6 +250,47 @@ Focus on finding issues that are:
 
 Provide your analysis in the structured JSON format with detailed issue descriptions."""
         
+        return prompt
+
+    def _build_file_query_prompt(self, *, file_path: str, content: str, question: str,
+                                 repository_context: Optional[Dict[str, Any]], truncated: bool) -> str:
+        """Build a question-focused prompt for a specific file.
+
+        The assistant must answer directly using evidence from the file content.
+        """
+        file_extension = Path(file_path).suffix.lower()
+        language = self._get_language(file_extension)
+
+        context_info = ""
+        if repository_context:
+            context_info = f"""
+REPOSITORY CONTEXT:
+- Total files: {repository_context.get('total_files', 'Unknown')}
+- Main languages: {', '.join(repository_context.get('main_languages', []))}
+- Project type: {repository_context.get('project_type', 'Unknown')}
+"""
+
+        truncated_note = "\n\n[Note: File content truncated to first " + str(self.max_lines) + " lines]" if truncated else ""
+
+        prompt = f"""You are inspecting a single {language} file to answer a specific question. Read the file content and provide a concise answer grounded ONLY in the code.
+
+QUESTION:
+{question}
+
+FILE INFORMATION:
+- Path: {file_path}
+- Language: {language}{context_info}
+
+FILE CONTENT:
+{self.format_code_snippet(content, language)}{truncated_note}
+
+ANSWERING GUIDELINES:
+1. Answer directly and succinctly, citing exact identifiers, config values, or lines when relevant.
+2. If the answer is not present in this file, say "Not found in this file" and suggest the most likely file(s) to check next (e.g., settings, model/config files) based on the content.
+3. If multiple options exist in the file, state the conditions that select among them.
+4. Do NOT speculate; base your answer strictly on the provided file content.
+"""
+
         return prompt
     
     def _get_focus_instructions(self, analysis_focus: str) -> str:

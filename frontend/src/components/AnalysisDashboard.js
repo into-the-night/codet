@@ -90,12 +90,18 @@ const AnalysisDashboard = () => {
   const { summary, issues } = analysisData;
   const criticalIssues = issues.filter(issue => issue.severity === 'critical');
 
-  // Extract GitHub repo information from the summary if available
+  // Extract GitHub repo information from the summary or project_path if available
   const extractGithubRepo = () => {
-    if (summary?.github_url) {
+    // Check both github_url and project_path
+    const githubUrl = summary?.github_url || analysisData?.project_path;
+    
+    if (githubUrl && typeof githubUrl === 'string') {
+      // Fix common typos (missing slash after https:)
+      const fixedUrl = githubUrl.replace(/^https:\/(?!\/)/, 'https://');
+      
       // Extract owner and repo from GitHub URL
       // Example: https://github.com/owner/repo -> { owner: 'owner', repo: 'repo' }
-      const match = summary.github_url.match(/github\.com\/([^\/]+)\/([^\/]+)/);
+      const match = fixedUrl.match(/github\.com\/([^\/]+)\/([^\/]+)/);
       if (match) {
         return {
           owner: match[1],
@@ -107,6 +113,13 @@ const AnalysisDashboard = () => {
   };
 
   const githubRepo = extractGithubRepo();
+
+  // Debug logging
+  console.log('Analysis Data:', analysisData);
+  console.log('Summary:', summary);
+  console.log('GitHub URL from summary:', summary?.github_url);
+  console.log('Project Path:', analysisData?.project_path);
+  console.log('Extracted GitHub Repo:', githubRepo);
 
   return (
     <div className="analysis-dashboard">

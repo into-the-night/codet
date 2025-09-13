@@ -233,7 +233,28 @@ class OrchestratorEngine:
         
         # Set up handlers for both single and batch analysis
         logger.info("Setting up function handlers in orchestrator engine")
+
+        # query_file handler: ask a focused question about a file
+        async def query_file_handler(file_path: str, question: str) -> Dict[str, Any]:
+            try:
+                repository_context = {
+                    'total_files': tree_data['statistics']['total_files'],
+                    'main_languages': list(tree_data['statistics']['file_extensions'].keys())[:5],
+                    'project_type': self._detect_project_type(tree_data)
+                }
+                answer = await self.file_analysis_agent.answer_file_query(
+                    file_path=file_path,
+                    root_path=root_path,
+                    question=question,
+                    repository_context=repository_context,
+                )
+                return {"success": True, "file_path": file_path, "answer": answer}
+            except Exception as e:
+                logger.error(f"query_file error for {file_path}: {e}")
+                return {"success": False, "error": str(e)}
+
         self.orchestrator_agent.function_handlers = {
+            "query_file": query_file_handler,
             "analyze_file": file_analysis_handler,
             "analyze_files_batch": batch_file_analysis_handler
         }

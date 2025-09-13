@@ -291,9 +291,18 @@ class BaseAgent:
                     logger.warning(f"Failed to extract JSON from response: {e}")
                     pass
                 
-                # If all parsing fails, return a default empty response instead of raising
+                # If all parsing fails, return a schema-appropriate default instead of raising
                 logger.error(f"All JSON parsing attempts failed, returning empty response. Original error: {parse_error}")
-                return response_schema.model_validate({"issues": []})
+                try:
+                    # Prefer defaults based on known fields
+                    if 'issues' in response_schema.model_fields:
+                        return response_schema.model_validate({"issues": []})
+                    if 'answer' in response_schema.model_fields:
+                        return response_schema.model_validate({"answer": "", "files_to_analyze": [], "analysis_complete": False})
+                except Exception:
+                    pass
+                # Last resort: construct with no data
+                return response_schema.model_validate({})
             
         except Exception as e:
             logger.error(f"Error generating structured response: {e}")
@@ -383,9 +392,16 @@ class BaseAgent:
                 return final_result
                 
             else:
-                # No tool calls detected - don't retry, just return empty response
+                # No tool calls detected - return schema-appropriate default
                 logger.info("No tool calls detected in response")
-                return response_schema.model_validate({"issues": []})
+                try:
+                    if 'issues' in response_schema.model_fields:
+                        return response_schema.model_validate({"issues": []})
+                    if 'answer' in response_schema.model_fields:
+                        return response_schema.model_validate({"answer": "", "files_to_analyze": [], "analysis_complete": False})
+                except Exception:
+                    pass
+                return response_schema.model_validate({})
             
         except Exception as e:
             logger.error(f"Error generating structured response with functions: {e}")
