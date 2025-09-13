@@ -117,9 +117,11 @@ class OrchestratorAgent(BaseAgent):
         return """You are the main orchestrator for a comprehensive code analysis system. Your role is to strategically select which files to analyze and coordinate the analysis process.
 
 CRITICAL: Your workflow MUST be:
-1. Use analyze_file or analyze_files_batch functions to request file analysis
-2. Wait for and process the function results
+1. Use the analyze_file or analyze_files_batch tools through the system's tool-calling mechanism (NOT by writing Python code)
+2. Wait for and process the tool results
 3. Only then return {"issues": [...]} with compiled findings
+
+IMPORTANT: DO NOT write Python code like self.analyze_file() or function calls. The system provides these as tools that you invoke through the tool-calling interface.
 
 Your responsibilities:
 1. **Strategic File Selection**: Choose the most important files to analyze based on:
@@ -131,7 +133,7 @@ Your responsibilities:
    - Files with high complexity or large size
    - Files that haven't been analyzed yet
 
-2. **Analysis Coordination**: Use the analyze_file or analyze_files_batch functions to delegate file analysis to specialized agents. Prefer analyze_files_batch for better performance when analyzing multiple files.
+2. **Analysis Coordination**: Use the analyze_file or analyze_files_batch tools to delegate file analysis to specialized agents. Prefer analyze_files_batch for better performance when analyzing multiple files.
 
 3. **Iterative Process**: Continue selecting and analyzing files until you have comprehensive coverage of the codebase
 
@@ -171,8 +173,8 @@ When issues are found, they must be categorized using ONLY these categories:
 - style: Code style and formatting issues
 - maintainability: Design issues, architectural concerns, coupling, and cohesion problems
 
-IMPORTANT: You MUST use the provided functions to analyze files. DO NOT return file lists in your response.
-- Use analyze_file or analyze_files_batch functions to request file analysis
+IMPORTANT: You MUST use the provided tools to analyze files. DO NOT return file lists in your response.
+- Use analyze_file or analyze_files_batch tools to request file analysis (through the tool-calling interface, NOT Python code)
 - Only after receiving analysis results, compile and return issues in the structured format
 
 If no files need to be analyzed or you've completed analysis, return an empty issues list:
@@ -201,9 +203,19 @@ When a user asks a question:
 3. **Analyze Files**: Use the analyze_file function to examine relevant files
 4. **Provide Comprehensive Answer**: Synthesize information from analyzed files to answer the question
 
-For each file you want to analyze, call the analyze_file function with:
-- file_path: The relative path to the file
-- analysis_focus: Specific area to focus on based on the user's question
+IMPORTANT: You have access to the following tools/functions:
+- analyze_file: To analyze a specific file
+- analyze_files_batch: To analyze multiple files in parallel
+
+To use these tools, you MUST use the tool-calling mechanism provided by the system. DO NOT write Python code or function calls like self.analyze_file(). Instead, the system will automatically detect when you want to use a tool based on your response format.
+
+When you need to analyze a file:
+- Simply indicate that you want to use the analyze_file function
+- Provide the required parameters:
+  - file_path: The relative path to the file
+  - analysis_focus: Specific area to focus on based on the user's question (optional)
+
+The system will handle the actual function execution and provide you with the results.
 
 After analyzing relevant files, provide a comprehensive answer that directly addresses the user's question. Include specific details from the analyzed code when relevant."""
 
@@ -413,7 +425,7 @@ ANALYSIS OBJECTIVES:
 2. **Comprehensive Coverage**: Ensure all critical files are analyzed
 3. **Quality Focus**: Prioritize files likely to contain issues
 
-Start by identifying and analyzing the most critical files in the repository. Use the analyze_file function to delegate analysis of each file to specialized agents.
+Start by identifying and analyzing the most critical files in the repository. Use the analyze_file tool to delegate analysis of each file to specialized agents.
 
 Focus on files that are:
 - Main entry points and core business logic
@@ -422,9 +434,9 @@ Focus on files that are:
 - Files with security implications
 - Test files and documentation
 
-Begin your analysis by calling analyze_file or analyze_files_batch functions for the most important files you've identified.
+Begin your analysis by using the analyze_file or analyze_files_batch tools for the most important files you've identified.
 
-REMEMBER: You must use the provided functions (analyze_file or analyze_files_batch) to analyze files. Do NOT return file lists directly in your response.
+REMEMBER: You must use the provided tools (analyze_file or analyze_files_batch) through the tool-calling interface to analyze files. Do NOT write Python code or return file lists directly in your response.
 
 Example function calls:
 - analyze_file(file_path="src/main.py", analysis_focus="entry point and security")
@@ -593,9 +605,9 @@ Focus on files that are:
 - Documentation files
 - Test files that might show expected behavior
 
-Begin your analysis by calling analyze_file or analyze_files_batch functions for the most relevant files.
+Begin your analysis by using the analyze_file or analyze_files_batch tools for the most relevant files.
 
-REMEMBER: You must use the provided functions to analyze files. Do NOT return file lists directly."""
+REMEMBER: You must use the provided tools through the tool-calling interface to analyze files. Do NOT write Python code or return file lists directly."""
         
         return prompt
     
