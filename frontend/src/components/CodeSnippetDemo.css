@@ -1,0 +1,137 @@
+.code-snippet-demo {
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 20px;
+}
+
+.demo-header {
+  text-align: center;
+  margin-bottom: 30px;
+}
+
+.demo-header h2 {
+  color: var(--text-primary);
+  margin-bottom: 10px;
+  font-size: 2rem;
+  font-weight: 700;
+}
+
+.demo-header p {
+  color: var(--text-secondary);
+  font-size: 1.1rem;
+  line-height: 1.6;
+  max-width: 600px;
+  margin: 0 auto;
+}
+
+.demo-controls {
+  display: flex;
+  justify-content: center;
+  gap: 12px;
+  margin-bottom: 30px;
+  flex-wrap: wrap;
+}
+
+.demo-button {
+  padding: 10px 20px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-primary);
+  border-radius: 8px;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: all 0.2s ease;
+  font-size: 0.9rem;
+  font-weight: 500;
+}
+
+.demo-button:hover {
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
+  border-color: var(--border-secondary);
+  transform: translateY(-1px);
+}
+
+.demo-button.active {
+  background: var(--primary);
+  color: white;
+  border-color: var(--primary);
+}
+
+.demo-button.active:hover {
+  background: var(--primary-dark, var(--primary));
+  transform: translateY(-1px);
+}
+
+.demo-content {
+  margin-bottom: 40px;
+}
+
+.demo-features {
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-primary);
+  border-radius: 12px;
+  padding: 24px;
+}
+
+.demo-features h3 {
+  color: var(--text-primary);
+  margin-bottom: 16px;
+  font-size: 1.2rem;
+  font-weight: 600;
+}
+
+.demo-features ul {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+
+.demo-features li {
+  color: var(--text-secondary);
+  margin-bottom: 8px;
+  font-size: 0.95rem;
+  line-height: 1.5;
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+}
+
+.demo-features li strong {
+  color: var(--text-primary);
+  font-weight: 600;
+}
+
+@media (max-width: 768px) {
+  .code-snippet-demo {
+    padding: 16px;
+  }
+  
+  .demo-header h2 {
+    font-size: 1.5rem;
+  }
+  
+  .demo-header p {
+    font-size: 1rem;
+  }
+  
+  .demo-controls {
+    gap: 8px;
+  }
+  
+  .demo-button {
+    padding: 8px 16px;
+    font-size: 0.85rem;
+  }
+  
+  .demo-features {
+    padding: 20px;
+  }
+  
+  .demo-features h3 {
+    font-size: 1.1rem;
+  }
+  
+  .demo-features li {
+    font-size: 0.9rem;
+  }
+}

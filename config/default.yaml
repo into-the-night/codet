@@ -1,0 +1,91 @@
+# Default configuration for Code Quality Intelligence Agent
+
+# Analysis settings
+analysis:
+  # Maximum file size to analyze (in bytes)
+  max_file_size: 1048576  # 1MB
+  
+  # File extensions to analyze
+  supported_extensions:
+    - .py
+    - .js
+    - .ts
+    - .jsx
+    - .tsx
+    - .java
+    - .cpp
+    - .c
+    - .cs
+    - .go
+    - .rs
+    - .rb
+    - .php
+  
+  # Patterns to exclude
+  exclude_patterns:
+    - "*/node_modules/*"
+    - "*/.git/*"
+    - "*/venv/*"
+    - "*/build/*"
+    - "*/dist/*"
+    - "*/__pycache__/*"
+
+# Analyzer-specific settings
+analyzers:
+  python:
+    max_complexity: 10
+    max_line_length: 120
+    min_docstring_length: 10
+  
+  javascript:
+    max_function_length: 50
+    max_file_length: 500
+    check_console_logs: true
+  
+  security:
+    check_hardcoded_secrets: true
+    check_sql_injection: true
+    check_command_injection: true
+  
+  complexity:
+    max_nesting_depth: 4
+    max_function_lines: 50
+    max_file_lines: 500
+  
+  duplication:
+    min_duplicate_lines: 5
+    min_duplicate_tokens: 50
+
+# API settings
+api:
+  host: "0.0.0.0"
+  port: 8000
+  cors_origins:
+    - "http://localhost:3000"
+    - "http://localhost:8000"
+  
+  # Rate limiting
+  rate_limit:
+    enabled: true
+    requests_per_minute: 60
+
+# Reporting settings
+reports:
+  output_dir: "reports"
+  formats:
+    - json
+    - html
+    - markdown
+
+# Q&A settings (for future LLM integration)
+qa:
+  enabled: false
+  model: "gpt-3.5-turbo"
+  max_context_length: 4000
+  temperature: 0.7
+
+# Logging
+logging:
+  level: "INFO"
+  format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+  file: "cqi.log"

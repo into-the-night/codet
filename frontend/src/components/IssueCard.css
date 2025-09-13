@@ -1,0 +1,584 @@
+.issue-card {
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-primary);
+  border-radius: 12px;
+  overflow: hidden;
+  transition: all 0.2s ease;
+}
+
+.issue-card:hover {
+  border-color: var(--border-secondary);
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+}
+
+.issue-card__header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  padding: 20px;
+  cursor: pointer;
+  transition: background-color 0.2s ease;
+}
+
+.issue-card__header:hover {
+  background: var(--bg-tertiary);
+}
+
+.issue-card__main {
+  display: flex;
+  align-items: flex-start;
+  gap: 16px;
+  flex: 1;
+}
+
+.issue-card__severity {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  min-width: 60px;
+}
+
+.severity-icon {
+  font-size: 1.25rem;
+}
+
+.severity-badge {
+  font-size: 0.75rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.issue-card__content {
+  flex: 1;
+}
+
+.issue-card__title {
+  font-size: 1.125rem;
+  font-weight: 600;
+  color: var(--text-primary);
+  margin-bottom: 8px;
+  line-height: 1.3;
+}
+
+.issue-card__description {
+  color: var(--text-secondary);
+  font-size: 0.9rem;
+  line-height: 1.5;
+  margin-bottom: 12px;
+}
+
+.issue-card__meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  font-size: 0.8rem;
+}
+
+.category {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--text-secondary);
+  background: var(--bg-tertiary);
+  padding: 4px 8px;
+  border-radius: 6px;
+  border: 1px solid var(--border-primary);
+}
+
+.detection-method {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 0.75rem;
+  font-weight: 500;
+  background: var(--bg-tertiary);
+  padding: 4px 8px;
+  border-radius: 6px;
+  border: 1px solid var(--border-primary);
+}
+
+.file-path {
+  color: var(--text-muted);
+  font-family: 'JetBrains Mono', 'Fira Code', monospace;
+  background: var(--bg-primary);
+  padding: 4px 8px;
+  border-radius: 6px;
+  border: 1px solid var(--border-primary);
+}
+
+.issue-card__actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.expand-button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  background: transparent;
+  border: 1px solid var(--border-primary);
+  border-radius: 6px;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.expand-button:hover {
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
+  border-color: var(--border-secondary);
+}
+
+.expand-button.expanded {
+  transform: rotate(180deg);
+}
+
+.copy-issue-button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  background: var(--accent-primary);
+  border: 1px solid var(--accent-primary);
+  border-radius: 6px;
+  color: var(--bg-primary);
+  cursor: pointer;
+  transition: all 0.2s ease;
+  position: relative;
+  overflow: hidden;
+}
+
+.copy-issue-button:hover:not(:disabled) {
+  background: var(--accent-secondary);
+  border-color: var(--accent-secondary);
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+}
+
+.copy-issue-button:disabled {
+  opacity: 0.7;
+  cursor: not-allowed;
+  transform: none;
+}
+
+.copy-issue-button.success {
+  background: #10b981;
+  border-color: #10b981;
+  color: white;
+}
+
+.copy-issue-button.error {
+  background: #ef4444;
+  border-color: #ef4444;
+  color: white;
+}
+
+.copy-issue-button .spinning {
+  animation: spin 1s linear infinite;
+}
+
+.github-issue-button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  background: #24292e;
+  border: 1px solid #24292e;
+  border-radius: 6px;
+  color: white;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  position: relative;
+  overflow: hidden;
+}
+
+.github-issue-button:hover:not(:disabled) {
+  background: #0366d6;
+  border-color: #0366d6;
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(3, 102, 214, 0.3);
+}
+
+.github-issue-button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+  transform: none;
+  background: var(--bg-tertiary);
+  border-color: var(--border-primary);
+  color: var(--text-muted);
+}
+
+.github-issue-button:disabled:hover {
+  background: var(--bg-tertiary);
+  border-color: var(--border-primary);
+  transform: none;
+  box-shadow: none;
+}
+
+@keyframes spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.issue-card__details {
+  border-top: 1px solid var(--border-primary);
+  background: var(--bg-primary);
+  padding: 20px;
+}
+
+.suggestion {
+  margin-bottom: 20px;
+}
+
+.suggestion-title {
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: var(--text-primary);
+  margin-bottom: 8px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.suggestion-text {
+  color: var(--text-secondary);
+  font-size: 0.9rem;
+  line-height: 1.5;
+  background: var(--bg-secondary);
+  padding: 12px;
+  border-radius: 8px;
+  border: 1px solid var(--border-primary);
+}
+
+.code-snippet {
+  margin-bottom: 0;
+}
+
+.code-snippet-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+
+.code-snippet-title {
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: var(--text-primary);
+  margin: 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.copy-button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  background: transparent;
+  border: 1px solid var(--border-primary);
+  border-radius: 6px;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: all 0.2s ease;
+  padding: 0;
+}
+
+.copy-button:hover {
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
+  border-color: var(--border-secondary);
+  transform: translateY(-1px);
+}
+
+.copy-button:active {
+  transform: translateY(0);
+}
+
+.code-snippet-container {
+  position: relative;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border-primary);
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.code-snippet-content {
+  background: transparent;
+  border: none;
+  border-radius: 0;
+  padding: 16px;
+  overflow-x: auto;
+  font-family: 'JetBrains Mono', 'Fira Code', 'Consolas', 'Monaco', monospace;
+  font-size: 0.8rem;
+  line-height: 1.5;
+  color: var(--text-primary);
+  margin: 0;
+  white-space: pre-wrap;
+  word-wrap: break-word;
+}
+
+.code-snippet-content code {
+  background: none;
+  padding: 0;
+  border-radius: 0;
+  font-size: inherit;
+  font-family: inherit;
+  color: inherit;
+}
+
+/* Syntax highlighting classes */
+.language-python .code-snippet-content {
+  color: #3776ab;
+}
+
+.language-javascript .code-snippet-content,
+.language-typescript .code-snippet-content {
+  color: #f7df1e;
+}
+
+.language-java .code-snippet-content {
+  color: #ed8b00;
+}
+
+.language-go .code-snippet-content {
+  color: #00add8;
+}
+
+.language-rust .code-snippet-content {
+  color: #ce422b;
+}
+
+.language-cpp .code-snippet-content,
+.language-c .code-snippet-content {
+  color: #00599c;
+}
+
+.language-json .code-snippet-content {
+  color: #000000;
+}
+
+.language-yaml .code-snippet-content,
+.language-yml .code-snippet-content {
+  color: #cb171e;
+}
+
+.language-html .code-snippet-content {
+  color: #e34f26;
+}
+
+.language-css .code-snippet-content {
+  color: #1572b6;
+}
+
+.language-sql .code-snippet-content {
+  color: #336791;
+}
+
+.language-bash .code-snippet-content {
+  color: #4eaa25;
+}
+
+/* Highlight the problematic line if it exists */
+.code-snippet-content code {
+  position: relative;
+}
+
+/* Add subtle syntax highlighting for common patterns */
+.code-snippet-content {
+  /* Keywords */
+  --keyword-color: #d73a49;
+  --string-color: #032f62;
+  --comment-color: #6a737d;
+  --number-color: #005cc5;
+  --function-color: #6f42c1;
+}
+
+/* Code line styling */
+.code-line {
+  display: flex;
+  align-items: flex-start;
+  line-height: 1.6;
+  font-family: inherit;
+  margin: 0;
+  padding: 2px 0;
+}
+
+.code-line.problematic-line {
+  background: rgba(220, 38, 38, 0.1);
+  border-left: 3px solid var(--error);
+  padding-left: 8px;
+  margin-left: -8px;
+  border-radius: 4px;
+  position: relative;
+}
+
+.code-line.problematic-line::before {
+  content: '⚠️';
+  position: absolute;
+  left: -20px;
+  top: 2px;
+  font-size: 0.8rem;
+}
+
+.line-number {
+  color: var(--text-muted);
+  font-size: 0.75rem;
+  min-width: 50px;
+  text-align: right;
+  margin-right: 8px;
+  user-select: none;
+  font-family: 'JetBrains Mono', 'Fira Code', 'Consolas', 'Monaco', monospace;
+}
+
+.line-separator {
+  color: var(--text-muted);
+  margin-right: 8px;
+  user-select: none;
+  font-family: 'JetBrains Mono', 'Fira Code', 'Consolas', 'Monaco', monospace;
+}
+
+.line-content {
+  flex: 1;
+  color: var(--text-primary);
+  font-family: 'JetBrains Mono', 'Fira Code', 'Consolas', 'Monaco', monospace;
+  white-space: pre-wrap;
+  word-wrap: break-word;
+}
+
+.problematic-line .line-content {
+  color: var(--error);
+  font-weight: 500;
+}
+
+/* Syntax highlighting for different languages */
+.language-python .line-content {
+  color: #3776ab;
+}
+
+.language-javascript .line-content,
+.language-typescript .line-content {
+  color: #f7df1e;
+}
+
+.language-java .line-content {
+  color: #ed8b00;
+}
+
+.language-go .line-content {
+  color: #00add8;
+}
+
+.language-rust .line-content {
+  color: #ce422b;
+}
+
+.language-cpp .line-content,
+.language-c .line-content {
+  color: #00599c;
+}
+
+.language-json .line-content {
+  color: #000000;
+}
+
+.language-yaml .line-content,
+.language-yml .line-content {
+  color: #cb171e;
+}
+
+.language-html .line-content {
+  color: #e34f26;
+}
+
+.language-css .line-content {
+  color: #1572b6;
+}
+
+.language-sql .line-content {
+  color: #336791;
+}
+
+.language-bash .line-content {
+  color: #4eaa25;
+}
+
+@media (max-width: 768px) {
+  .issue-card__header {
+    padding: 16px;
+  }
+  
+  .issue-card__main {
+    gap: 12px;
+  }
+  
+  .issue-card__severity {
+    min-width: 50px;
+  }
+  
+  .issue-card__title {
+    font-size: 1rem;
+  }
+  
+  .issue-card__description {
+    font-size: 0.85rem;
+  }
+  
+  .issue-card__meta {
+    flex-direction: column;
+    gap: 8px;
+  }
+  
+  .issue-card__details {
+    padding: 16px;
+  }
+  
+  .code-snippet-header {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 8px;
+  }
+  
+  .code-snippet-title {
+    font-size: 0.85rem;
+  }
+  
+  .copy-button {
+    width: 24px;
+    height: 24px;
+    align-self: flex-end;
+  }
+  
+  .code-snippet-content {
+    padding: 12px;
+    font-size: 0.75rem;
+  }
+  
+  .line-number {
+    min-width: 40px;
+    font-size: 0.7rem;
+  }
+  
+  .line-separator {
+    margin-right: 6px;
+  }
+  
+  .code-line.problematic-line::before {
+    left: -16px;
+    font-size: 0.7rem;
+  }
+}

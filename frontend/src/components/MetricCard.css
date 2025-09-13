@@ -1,0 +1,164 @@
+.metric-card {
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-primary);
+  border-radius: 12px;
+  padding: 24px;
+  transition: all 0.2s ease;
+  position: relative;
+  overflow: hidden;
+}
+
+.metric-card::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 2px;
+  background: linear-gradient(90deg, var(--border-primary) 0%, var(--border-secondary) 100%);
+  opacity: 0;
+  transition: opacity 0.2s ease;
+}
+
+.metric-card:hover {
+  transform: translateY(-2px);
+  border-color: var(--border-secondary);
+  background: var(--bg-tertiary);
+}
+
+.metric-card:hover::before {
+  opacity: 1;
+}
+
+.metric-card__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 16px;
+}
+
+.metric-card__title {
+  font-size: 0.9rem;
+  font-weight: 500;
+  color: var(--text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  margin: 0;
+}
+
+.metric-card__icon {
+  font-size: 1.25rem;
+}
+
+.metric-card__value {
+  display: flex;
+  align-items: baseline;
+  gap: 4px;
+  margin-bottom: 16px;
+}
+
+.value-number {
+  font-size: 2.5rem;
+  font-weight: 700;
+  line-height: 1;
+  color: var(--text-primary);
+}
+
+.value-unit {
+  font-size: 1rem;
+  font-weight: 500;
+  color: var(--text-secondary);
+}
+
+.metric-card__progress {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.progress-bar {
+  flex: 1;
+  height: 4px;
+  background: var(--bg-primary);
+  border-radius: 2px;
+  overflow: hidden;
+}
+
+.progress-fill {
+  height: 100%;
+  border-radius: 2px;
+  transition: width 0.3s ease;
+}
+
+.progress-text {
+  font-size: 0.8rem;
+  font-weight: 500;
+  color: var(--text-secondary);
+  min-width: 32px;
+  text-align: right;
+}
+
+/* Status variants */
+.metric-card--success {
+  border-color: rgba(0, 255, 136, 0.2);
+}
+
+.metric-card--success::before {
+  background: linear-gradient(90deg, var(--success) 0%, rgba(0, 255, 136, 0.5) 100%);
+}
+
+.metric-card--warning {
+  border-color: rgba(255, 170, 0, 0.2);
+}
+
+.metric-card--warning::before {
+  background: linear-gradient(90deg, var(--warning) 0%, rgba(255, 170, 0, 0.5) 100%);
+}
+
+.metric-card--error {
+  border-color: rgba(255, 68, 68, 0.2);
+}
+
+.metric-card--error::before {
+  background: linear-gradient(90deg, var(--error) 0%, rgba(255, 68, 68, 0.5) 100%);
+}
+
+/* Responsive */
+@media (max-width: 768px) {
+  .metric-card {
+    padding: 20px;
+  }
+  
+  .value-number {
+    font-size: 2rem;
+  }
+  
+  .metric-card__title {
+    font-size: 0.8rem;
+  }
+  
+  .metric-card__icon {
+    font-size: 1rem;
+  }
+}
+
+@media (max-width: 480px) {
+  .metric-card {
+    padding: 16px;
+  }
+  
+  .value-number {
+    font-size: 1.75rem;
+  }
+  
+  .metric-card__progress {
+    flex-direction: column;
+    gap: 8px;
+    align-items: stretch;
+  }
+  
+  .progress-text {
+    text-align: center;
+    min-width: auto;
+  }
+}

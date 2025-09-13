@@ -1,0 +1,44 @@
+# Redis Configuration Example
+# Copy this to config/default.yaml and customize as needed
+
+# Agent configuration
+agent:
+  google_api_key: ${GOOGLE_API_KEY}
+  model_name: "gemini-2.5-flash"
+  temperature: 0.1
+  max_tokens: 8192
+  timeout: 60
+  enable_caching: true
+  
+  # Local LLM Configuration (Ollama)
+  use_local: false  # Set to true to use Ollama instead of Google Gemini
+  ollama_model: llama3.2  # Options: llama3.2, mistral, codellama, etc.
+
+# Redis configuration
+redis:
+  host: "localhost"
+  port: 6379
+  db: 0
+  password: null  # Set REDIS_PASSWORD environment variable if needed
+  decode_responses: true
+  socket_connect_timeout: 5
+  socket_timeout: 5
+  retry_on_timeout: true
+  max_connections: 20
+  enable_message_history: true
+  enable_caching: true
+  message_history_ttl: 86400  # 24 hours in seconds
+  cache_ttl: 3600  # 1 hour in seconds
+
+# Analyzer configuration
+analyzer:
+  enable_parallel: true
+  max_workers: 4
+  severity_threshold: "low"
+  ignore_patterns: []
+  custom_rules: {}
+
+# Project settings
+project_root: "."
+output_dir: "./cqi_reports"
+verbose: false

@@ -1,0 +1,173 @@
+.github-analyzer {
+  min-height: calc(100vh - 80px);
+  padding: 60px 0;
+  display: flex;
+  align-items: center;
+}
+
+.analyzer-content {
+  display: flex;
+  flex-direction: column;
+  gap: 48px;
+}
+
+.hero-section {
+  text-align: center;
+  max-width: 600px;
+  margin: 0 auto;
+}
+
+.hero-title {
+  font-size: 3.5rem;
+  font-weight: 700;
+  line-height: 1.1;
+  margin-bottom: 24px;
+  letter-spacing: -0.02em;
+}
+
+.hero-description {
+  font-size: 1.25rem;
+  color: var(--text-secondary);
+  line-height: 1.6;
+  font-weight: 400;
+}
+
+.analyzer-card {
+  padding: 40px;
+  max-width: 600px;
+  margin: 0 auto;
+  width: 100%;
+}
+
+.card-header {
+  text-align: center;
+  margin-bottom: 32px;
+}
+
+.card-title {
+  font-size: 1.5rem;
+  font-weight: 600;
+  margin-bottom: 8px;
+  color: var(--text-primary);
+}
+
+.card-description {
+  color: var(--text-secondary);
+  font-size: 0.95rem;
+  line-height: 1.5;
+}
+
+.input-section {
+  margin-bottom: 24px;
+}
+
+.github-input {
+  width: 100%;
+  font-size: 1rem;
+}
+
+.error-message {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--error);
+  font-size: 0.875rem;
+  margin-top: 12px;
+  padding: 8px 12px;
+  background: rgba(255, 68, 68, 0.1);
+  border: 1px solid rgba(255, 68, 68, 0.2);
+  border-radius: 6px;
+}
+
+.action-section {
+  margin-bottom: 24px;
+}
+
+.analyze-button {
+  width: 100%;
+  justify-content: center;
+  gap: 8px;
+}
+
+.progress-section {
+  margin-top: 24px;
+}
+
+.progress-bar {
+  width: 100%;
+  height: 4px;
+  background: var(--bg-tertiary);
+  border-radius: 2px;
+  overflow: hidden;
+  margin-bottom: 12px;
+}
+
+.progress-fill {
+  height: 100%;
+  background: linear-gradient(90deg, var(--accent-primary) 0%, var(--success) 100%);
+  border-radius: 2px;
+  transition: width 0.3s ease;
+}
+
+.progress-text {
+  text-align: center;
+  color: var(--text-secondary);
+  font-size: 0.875rem;
+  font-weight: 500;
+}
+
+.features-section {
+  text-align: center;
+}
+
+.features-title {
+  font-size: 1.5rem;
+  font-weight: 600;
+  margin-bottom: 32px;
+  color: var(--text-primary);
+}
+
+.features-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+  gap: 24px;
+  max-width: 800px;
+  margin: 0 auto;
+}
+
+@media (max-width: 768px) {
+  .github-analyzer {
+    padding: 40px 0;
+  }
+  
+  .hero-title {
+    font-size: 2.5rem;
+  }
+  
+  .hero-description {
+    font-size: 1.125rem;
+  }
+  
+  .analyzer-card {
+    padding: 24px;
+  }
+  
+  .features-grid {
+    grid-template-columns: 1fr;
+    gap: 16px;
+  }
+}
+
+@media (max-width: 480px) {
+  .hero-title {
+    font-size: 2rem;
+  }
+  
+  .hero-description {
+    font-size: 1rem;
+  }
+  
+  .analyzer-card {
+    padding: 20px;
+  }
+}

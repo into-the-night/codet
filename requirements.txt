@@ -1,0 +1,45 @@
+# Core dependencies
+fastapi>=0.104.0
+uvicorn>=0.24.0
+pydantic>=2.0.0
+python-multipart>=0.0.6
+aiofiles>=23.0.0
+
+# Code analysis
+pygments>=2.16.0
+tree-sitter>=0.20.0
+radon>=6.0.0
+bandit>=1.7.0
+pylint>=3.0.0
+mypy>=1.7.0
+
+# Formatting and style
+black>=23.0.0
+isort>=5.12.0
+
+# Git integration
+gitpython>=3.1.0
+gitignore-parser>=0.1.0
+
+# CLI
+click>=8.1.0
+rich>=13.0.0
+
+# Testing
+pytest>=7.4.0
+pytest-asyncio>=0.21.0
+pytest-cov>=4.1.0
+
+# AI/ML (optional, for Q&A features)
+langchain>=0.1.0
+langchain-google-genai>=1.0.0
+langchain-core>=0.1.0
+langchain-ollama>=0.1.0
+
+# Utilities
+pyyaml>=6.0
+python-dotenv>=1.0.0
+
+# Redis for caching and message history
+redis>=5.0.0
+hiredis>=2.2.0
