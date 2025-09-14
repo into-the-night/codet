@@ -6,7 +6,11 @@ from pathlib import Path
 from datetime import datetime
 
 from .base_agent import BaseAgent
-from .schemas import AnalysisResponseSchema, CodeIssueSchema
+from .schemas import (
+    AnalysisResponseSchema, 
+    CodeIssueSchema,
+    FileAnalysisResultEnhanced
+)
 from ..core.config import AgentConfig
 from ..analyzers.analyzer import CodeIssue, IssueCategory, IssueSeverity
 
@@ -540,3 +544,153 @@ IMPORTANT: Only use these valid categories: security, performance, duplication, 
             '.dart': 'Dart',
         }
         return language_map.get(extension.lower(), 'Unknown')
+    
+    async def analyze_file_enhanced(self, file_path: str, 
+                                  root_path: Path,
+                                  analysis_focus: str = "general",
+                                  repository_context: Optional[Dict[str, Any]] = None) -> FileAnalysisResultEnhanced:
+        """
+        Enhanced file analysis that returns results with next steps suggestions
+        
+        Args:
+            file_path: Path to the file to analyze (relative to root)
+            root_path: Path to repository root
+            analysis_focus: Specific focus area for analysis
+            repository_context: Additional context about the repository
+            
+        Returns:
+            FileAnalysisResultEnhanced with issues and next steps
+        """
+        logger.info(f"Enhanced analysis of file: {file_path} (focus: {analysis_focus})")
+        
+        full_path = root_path / file_path
+        
+        if not full_path.exists() or not full_path.is_file():
+            return FileAnalysisResultEnhanced(
+                file_path=file_path,
+                issues=[],
+                summary=f"File not found: {file_path}"
+            )
+        
+        try:
+            # Read file content
+            with open(full_path, 'r', encoding='utf-8') as f:
+                content = f.read()
+            
+            # Check file size
+            if len(content) > self.max_file_size:
+                logger.warning(f"File too large, truncating: {full_path}")
+                content = content[:self.max_file_size] + "\n... [truncated]"
+            
+            # Determine file type
+            file_extension = Path(file_path).suffix.lower()
+            is_test_file = self._is_test_file(file_path)
+            
+            # Build enhanced analysis prompt
+            prompt = self._build_enhanced_analysis_prompt(
+                file_path, content, analysis_focus, repository_context, is_test_file
+            )
+            
+            # Generate structured analysis with enhanced schema
+            structured_response = await self.generate_structured_response(
+                prompt=prompt,
+                response_schema=FileAnalysisResultEnhanced,
+                context={
+                    'file_path': file_path,
+                    'file_size': len(content),
+                    'analysis_focus': analysis_focus,
+                    'is_test_file': is_test_file,
+                    'analysis_type': 'enhanced_file_analysis'
+                }
+            )
+            
+            # Convert issues to CodeIssue objects
+            if structured_response.issues:
+                code_issues = self._convert_to_code_issues(structured_response.issues, full_path)
+                structured_response.issues = code_issues
+            
+            logger.info(f"Enhanced analysis complete: {len(structured_response.issues)} issues, "
+                       f"{len(structured_response.next_steps)} next steps suggested")
+            
+            return structured_response
+            
+        except Exception as e:
+            logger.error(f"Error in enhanced file analysis {file_path}: {e}")
+            return FileAnalysisResultEnhanced(
+                file_path=file_path,
+                issues=[],
+                summary=f"Error analyzing file: {str(e)}"
+            )
+    
+    def _is_test_file(self, file_path: str) -> bool:
+        """Check if a file is a test file based on naming conventions"""
+        test_patterns = [
+            'test_', '_test.', '.test.', 'tests/', 'test/', '__tests__/', 
+            'spec.', '.spec.', 'specs/', 'spec/', '__specs__/'
+        ]
+        path_lower = file_path.lower()
+        return any(pattern in path_lower for pattern in test_patterns)
+    
+    def _build_enhanced_analysis_prompt(self, file_path: str, content: str,
+                                      analysis_focus: str,
+                                      repository_context: Optional[Dict[str, Any]],
+                                      is_test_file: bool) -> str:
+        """Build enhanced analysis prompt that requests next steps"""
+        file_extension = Path(file_path).suffix.lower()
+        language = self._get_language(file_extension)
+        
+        # Truncate very long files
+        lines = content.splitlines()
+        if len(lines) > self.max_lines:
+            content = '\n'.join(lines[:self.max_lines])
+            truncated_note = f"\n\n[Note: File truncated to first {self.max_lines} lines]"
+        else:
+            truncated_note = ""
+        
+        # Build context information
+        context_info = ""
+        if repository_context:
+            context_info = f"""
+REPOSITORY CONTEXT:
+- Total files: {repository_context.get('total_files', 'Unknown')}
+- Main languages: {', '.join(repository_context.get('main_languages', []))}
+- Project type: {repository_context.get('project_type', 'Unknown')}
+"""
+        
+        # Build focus-specific instructions
+        focus_instructions = self._get_focus_instructions(analysis_focus)
+        
+        prompt = f"""Analyze this {language} file for code quality issues and suggest next steps for the orchestrator.
+
+FILE INFORMATION:
+- Path: {file_path}
+- Language: {language}
+- Lines: {len(lines)}{context_info}
+
+ANALYSIS FOCUS: {analysis_focus.upper()}
+{focus_instructions}
+
+FILE CONTENT:
+{self.format_code_snippet(content, language)}{truncated_note}
+
+ANALYSIS REQUIREMENTS:
+
+1. **Code Issues**: Find quality, security, performance, and maintainability issues
+   - Provide exact line numbers and specific descriptions
+   - Include actionable suggestions for fixes
+
+2. **Next Steps**: Suggest what the orchestrator should check next, for example:
+   - If this is an implementation file (e.g., calculator.py), suggest: "check if calculate_total function has tests in test_calculator.py"
+   - If this is a test file, suggest: "verify that all functions from calculator.py are tested here"
+   - If imports are found, suggest: "analyze imported module utils.py for related issues"
+   - Be specific with function/class names and file paths
+
+3. **Summary**: Brief summary of the file's purpose and quality
+
+Return as FileAnalysisResultEnhanced with:
+- file_path: The path to this file
+- issues: List of code issues found
+- next_steps: List of specific suggestions (as strings) for what to check next
+- summary: Brief summary of the analysis"""
+        
+        return prompt

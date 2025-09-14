@@ -1,164 +1,148 @@
 """Configuration management for Code Quality Intelligence Agent"""
 
-import os
 from pathlib import Path
-from typing import Optional, Dict, Any
-from dataclasses import dataclass
-import json
-import yaml
-from dotenv import load_dotenv
+from typing import Optional
+from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic import Field
 
 
-@dataclass
-class RedisConfig:
-    """Configuration for Redis connection"""
-    host: str = "localhost"
-    port: int = 6379
-    db: int = 0
-    password: Optional[str] = None
-    decode_responses: bool = True
-    socket_connect_timeout: int = 5
-    socket_timeout: int = 5
-    retry_on_timeout: bool = True
-    max_connections: int = 20
-    enable_message_history: bool = True
-    enable_caching: bool = True
-    message_history_ttl: int = 86400  # 24 hours
-    cache_ttl: int = 3600  # 1 hour
+class Settings(BaseSettings):
+    """Application settings loaded from environment variables"""
 
-
-@dataclass
-class AgentConfig:
-    """Configuration for AI agents"""
-    google_api_key: Optional[str] = None
-    model_name: str = "gemini-2.5-flash"
-    temperature: float = 0.1
-    max_tokens: int = 8192
-    timeout: int = 60
-    enable_caching: bool = True
-    cache_dir: Path = Path.home() / ".cqi" / "cache"
+    # Gemini configuration (default cloud LLM)
+    google_api_key: Optional[str] = Field(None, alias="GOOGLE_API_KEY")
+    gemini_model: str = Field("gemini-1.5-flash", alias="GEMINI_MODEL")
     
-    # Ollama/Local LLM configuration
-    use_local: bool = False
-    ollama_model: str = "llama3.2"
-
-
-@dataclass
-class AnalyzerConfig:
-    """Configuration for analyzers"""
-    enable_parallel: bool = True
-    max_workers: int = 4
-    severity_threshold: str = "low"
-    ignore_patterns: list = None
-    custom_rules: Dict[str, Any] = None
-
-
-@dataclass
-class Config:
-    """Main configuration class"""
-    agent: AgentConfig
-    analyzer: AnalyzerConfig
-    redis: RedisConfig
-    project_root: Path
-    output_dir: Path
-    verbose: bool = False
+    # Agent settings
+    agent_temperature: float = Field(0.1, alias="AGENT_TEMPERATURE")
+    agent_max_tokens: int = Field(8192, alias="AGENT_MAX_TOKENS")
+    agent_timeout: int = Field(60, alias="AGENT_TIMEOUT")
+    enable_caching: bool = Field(True, alias="ENABLE_CACHING")
+    cache_dir: Path = Field(Path.home() / ".cqi" / "cache", alias="CACHE_DIR")
     
-    @classmethod
-    def load(cls, config_path: Optional[Path] = None) -> 'Config':
-        """Load configuration from environment and files"""
-        # Load environment variables
-        load_dotenv()
-        
-        # Default configuration
-        config_dict = {
-            'agent': {
-                'google_api_key': os.getenv('GOOGLE_API_KEY'),
-                'model_name': os.getenv('GOOGLE_MODEL_NAME', 'gemini-2.5-flash'),
-                'temperature': float(os.getenv('AGENT_TEMPERATURE', '0.1')),
-                'max_tokens': int(os.getenv('AGENT_MAX_TOKENS', '8192')),
-                'timeout': int(os.getenv('AGENT_TIMEOUT', '60')),
-                'enable_caching': os.getenv('ENABLE_CACHING', 'true').lower() == 'true',
-                'use_local': os.getenv('USE_LOCAL_LLM', 'false').lower() == 'true',
-                'ollama_model': os.getenv('OLLAMA_MODEL', 'llama3.2'),
-            },
-            'analyzer': {
-                'enable_parallel': os.getenv('ENABLE_PARALLEL', 'true').lower() == 'true',
-                'max_workers': int(os.getenv('MAX_WORKERS', '4')),
-                'severity_threshold': os.getenv('SEVERITY_THRESHOLD', 'low'),
-                'ignore_patterns': [],
-                'custom_rules': {}
-            },
-            'redis': {
-                'host': os.getenv('REDIS_HOST', 'localhost'),
-                'port': int(os.getenv('REDIS_PORT', '6379')),
-                'db': int(os.getenv('REDIS_DB', '0')),
-                'password': os.getenv('REDIS_PASSWORD'),
-                'decode_responses': os.getenv('REDIS_DECODE_RESPONSES', 'true').lower() == 'true',
-                'socket_connect_timeout': int(os.getenv('REDIS_CONNECT_TIMEOUT', '5')),
-                'socket_timeout': int(os.getenv('REDIS_SOCKET_TIMEOUT', '5')),
-                'retry_on_timeout': os.getenv('REDIS_RETRY_ON_TIMEOUT', 'true').lower() == 'true',
-                'max_connections': int(os.getenv('REDIS_MAX_CONNECTIONS', '20')),
-                'enable_message_history': os.getenv('REDIS_ENABLE_MESSAGE_HISTORY', 'true').lower() == 'true',
-                'enable_caching': os.getenv('REDIS_ENABLE_CACHING', 'true').lower() == 'true',
-                'message_history_ttl': int(os.getenv('REDIS_MESSAGE_HISTORY_TTL', '86400')),
-                'cache_ttl': int(os.getenv('REDIS_CACHE_TTL', '3600')),
-            },
-            'project_root': Path.cwd(),
-            'output_dir': Path.cwd() / 'cqi_reports',
-            'verbose': os.getenv('VERBOSE', 'false').lower() == 'true'
-        }
-        
-        # Load from config file if provided
-        if config_path and config_path.exists():
-            with open(config_path, 'r') as f:
-                if config_path.suffix == '.json':
-                    file_config = json.load(f)
-                elif config_path.suffix in ['.yaml', '.yml']:
-                    file_config = yaml.safe_load(f)
-                else:
-                    raise ValueError(f"Unsupported config file format: {config_path.suffix}")
-                
-                # Merge file config with defaults
-                config_dict = cls._merge_configs(config_dict, file_config)
-        
-        # Create config objects
-        agent_config = AgentConfig(**config_dict['agent'])
-        analyzer_config = AnalyzerConfig(**config_dict['analyzer'])
-        redis_config = RedisConfig(**config_dict['redis'])
-        
-        # Ensure cache directory exists
-        if agent_config.enable_caching:
-            agent_config.cache_dir.mkdir(parents=True, exist_ok=True)
-        
-        return cls(
-            agent=agent_config,
-            analyzer=analyzer_config,
-            redis=redis_config,
-            project_root=Path(config_dict['project_root']),
-            output_dir=Path(config_dict['output_dir']),
-            verbose=config_dict['verbose']
-        )
+    # Ollama/Local LLM
+    use_local_llm: bool = Field(False, alias="USE_LOCAL_LLM")
+    ollama_model: str = Field("llama3.2", alias="OLLAMA_MODEL")
     
-    @staticmethod
-    def _merge_configs(base: Dict[str, Any], override: Dict[str, Any]) -> Dict[str, Any]:
-        """Recursively merge configuration dictionaries"""
-        result = base.copy()
-        
-        for key, value in override.items():
-            if key in result and isinstance(result[key], dict) and isinstance(value, dict):
-                result[key] = Config._merge_configs(result[key], value)
-            else:
-                result[key] = value
-        
-        return result
+    # Qdrant settings
+    qdrant_url: str = Field("http://localhost:6333", alias="QDRANT_URL")
+    qdrant_api_key: Optional[str] = Field(None, alias="QDRANT_API_KEY")
+    use_memory: bool = Field(False, alias="USE_MEMORY")
     
-    def validate(self) -> bool:
+    # Redis settings
+    redis_host: str = Field("localhost", alias="REDIS_HOST")
+    redis_port: int = Field(6379, alias="REDIS_PORT")
+    redis_db: int = Field(0, alias="REDIS_DB")
+    redis_password: Optional[str] = Field(None, alias="REDIS_PASSWORD")
+    redis_decode_responses: bool = Field(True, alias="REDIS_DECODE_RESPONSES")
+    redis_socket_connect_timeout: int = Field(5, alias="REDIS_CONNECT_TIMEOUT")
+    redis_socket_timeout: int = Field(5, alias="REDIS_SOCKET_TIMEOUT")
+    redis_retry_on_timeout: bool = Field(True, alias="REDIS_RETRY_ON_TIMEOUT")
+    redis_max_connections: int = Field(20, alias="REDIS_MAX_CONNECTIONS")
+    redis_enable_message_history: bool = Field(True, alias="REDIS_ENABLE_MESSAGE_HISTORY")
+    redis_enable_caching: bool = Field(True, alias="REDIS_ENABLE_CACHING")
+    redis_message_history_ttl: int = Field(86400, alias="REDIS_MESSAGE_HISTORY_TTL")  # 24 hours
+    redis_cache_ttl: int = Field(3600, alias="REDIS_CACHE_TTL")  # 1 hour
+    
+    # Analyzer settings
+    enable_parallel: bool = Field(True, alias="ENABLE_PARALLEL")
+    max_workers: int = Field(4, alias="MAX_WORKERS")
+    severity_threshold: str = Field("low", alias="SEVERITY_THRESHOLD")
+    
+    # General settings
+    verbose: bool = Field(False, alias="VERBOSE")
+    project_root: Path = Field(Path.cwd(), alias="PROJECT_ROOT")
+    output_dir: Path = Field(Path.cwd() / "cqi_reports", alias="OUTPUT_DIR")
+    
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        env_file_encoding="utf-8",
+        case_sensitive=False,
+        extra="ignore"
+    )
+    
+    def validate_settings(self) -> bool:
         """Validate configuration"""
-        # Only require Google API key if not using local LLM
-        if not self.agent.use_local and not self.agent.google_api_key:
-            raise ValueError("Google API key not configured. Set GOOGLE_API_KEY environment variable or use --use-local flag.")
-        
+        # Check API key requirements based on provider
+        if not self.use_local_llm:
+            if not self.google_api_key:
+                raise ValueError("Google API key not configured. Set GOOGLE_API_KEY environment variable.")
+
         if not self.project_root.exists():
             raise ValueError(f"Project root does not exist: {self.project_root}")
         
+        # Ensure cache directory exists
+        if self.enable_caching:
+            self.cache_dir.mkdir(parents=True, exist_ok=True)
+        
         return True
+
+
+# Create a single global instance
+settings = Settings()
+
+
+# Compatibility layer for old code
+class AgentConfig:
+    """Compatibility wrapper for agent config"""
+    def __init__(self, s: Settings):
+        self.temperature = s.agent_temperature
+        self.max_tokens = s.agent_max_tokens
+        self.timeout = s.agent_timeout
+        self.enable_caching = s.enable_caching
+        self.cache_dir = s.cache_dir
+        self.use_local = s.use_local_llm
+        self.ollama_model = s.ollama_model
+        self.google_api_key = s.google_api_key
+        self.gemini_model = s.gemini_model
+        self.qdrant_url = s.qdrant_url
+        self.qdrant_api_key = s.qdrant_api_key
+        self.use_memory = s.use_memory
+
+
+class RedisConfig:
+    """Compatibility wrapper for redis config"""
+    def __init__(self, s: Settings):
+        self.host = s.redis_host
+        self.port = s.redis_port
+        self.db = s.redis_db
+        self.password = s.redis_password
+        self.decode_responses = s.redis_decode_responses
+        self.socket_connect_timeout = s.redis_socket_connect_timeout
+        self.socket_timeout = s.redis_socket_timeout
+        self.retry_on_timeout = s.redis_retry_on_timeout
+        self.max_connections = s.redis_max_connections
+        self.enable_message_history = s.redis_enable_message_history
+        self.enable_caching = s.redis_enable_caching
+        self.message_history_ttl = s.redis_message_history_ttl
+        self.cache_ttl = s.redis_cache_ttl
+
+
+class AnalyzerConfig:
+    """Compatibility wrapper for analyzer config"""
+    def __init__(self, s: Settings):
+        self.enable_parallel = s.enable_parallel
+        self.max_workers = s.max_workers
+        self.severity_threshold = s.severity_threshold
+        self.ignore_patterns = []
+        self.custom_rules = {}
+
+
+class Config:
+    """Compatibility wrapper for old Config class"""
+    def __init__(self, s: Settings):
+        self.agent = AgentConfig(s)
+        self.redis = RedisConfig(s)
+        self.analyzer = AnalyzerConfig(s)
+        self.project_root = s.project_root
+        self.output_dir = s.output_dir
+        self.verbose = s.verbose
+        
+    @classmethod
+    def load(cls, config_path=None):
+        """Load configuration (compatibility method)"""
+        return cls(settings)
+        
+    def validate(self):
+        """Validate configuration (compatibility method)"""
+        return settings.validate_settings()

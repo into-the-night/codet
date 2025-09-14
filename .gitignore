@@ -61,7 +61,6 @@ data/sample_projects/*
 !data/sample_projects/.gitkeep
 
 # Reports
-reports/
 *.html
 *.json
 

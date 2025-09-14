@@ -4,6 +4,7 @@ from pathlib import Path
 from typing import List, Set, Optional, Dict, Any
 import gitignore_parser
 import logging
+from ..utils import FileFilter
 
 
 logger = logging.getLogger(__name__)
@@ -16,6 +17,8 @@ class Repository:
         self.path = path.resolve()
         self._validate_path()
         self._gitignore = self._load_gitignore()
+        # Create file filter for consistent file handling
+        self.file_filter = FileFilter.from_path(self.path)
         
     def _validate_path(self) -> None:
         """Validate that the path exists and is accessible"""
@@ -36,29 +39,8 @@ class Repository:
     
     def get_files(self, extensions: Optional[Set[str]] = None) -> List[Path]:
         """Get all files in the repository with optional extension filtering"""
-        files = []
-        
-        if self.path.is_file():
-            if not extensions or self.path.suffix in extensions:
-                files.append(self.path)
-        else:
-            for file_path in self.path.rglob("*"):
-                if file_path.is_file():
-                    # Skip hidden files and directories
-                    if any(part.startswith('.') for part in file_path.parts):
-                        continue
-                    
-                    # Skip gitignored files
-                    if self._gitignore and self._gitignore(str(file_path)):
-                        continue
-                    
-                    # Filter by extension if specified
-                    if extensions and file_path.suffix not in extensions:
-                        continue
-                    
-                    files.append(file_path)
-        
-        return sorted(files)
+        # Use file filter for consistent filtering
+        return self.file_filter.iter_files(self.path, extensions=list(extensions) if extensions else None)
     
     def get_language_stats(self) -> Dict[str, int]:
         """Get statistics about languages in the repository"""

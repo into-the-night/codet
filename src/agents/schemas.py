@@ -65,3 +65,36 @@ class RepositoryAnalysisRequestSchema(BaseModel):
     repository_path: str = Field(description="Path to the repository root")
     analysis_type: str = Field(description="Type of analysis to perform")
     target_files: Optional[List[str]] = Field(None, description="Specific files to analyze")
+
+
+class FileAnalysisResultEnhanced(BaseModel):
+    """Enhanced file analysis response that includes next steps"""
+    file_path: str = Field(description="Path to the analyzed file")
+    issues: List[CodeIssueSchema] = Field(default_factory=list, description="Issues found in the file")
+    next_steps: List[str] = Field(default_factory=list, description="Suggested next steps for the orchestrator (e.g., 'check if calculate_total function has tests in test_calculator.py')")
+    summary: Optional[str] = Field(None, description="Brief summary of the file analysis")
+
+
+class CodeTypeEnum(str, Enum):
+    """Types of code constructs"""
+    FUNCTION = "function"
+    METHOD = "method"
+    CLASS = "class"
+    MODULE = "module"
+    PROPERTY = "property"
+    ENUM = "enum"
+    IMPORT = "import"
+
+
+class CodeChunk(BaseModel):
+    """Schema for a code chunk to be embedded"""
+    name: str = Field(description="Name of the code construct")
+    signature: str = Field(description="Function/method signature or class definition")
+    code_type: CodeTypeEnum = Field(description="Type of code construct")
+    docstring: Optional[str] = Field(None, description="Docstring or comments")
+    code: str = Field(description="The actual code content")
+    line: int = Field(description="Starting line number")
+    line_from: int = Field(description="Starting line number (inclusive)")
+    line_to: int = Field(description="Ending line number (inclusive)")
+    context: Dict[str, Any] = Field(description="Additional context (module, file path, class name, etc.)")
+    natural_language: Optional[str] = Field(None, description="Natural language representation of the code")

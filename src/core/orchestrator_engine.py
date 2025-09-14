@@ -19,9 +19,12 @@ logger = logging.getLogger(__name__)
 class OrchestratorEngine:
     """Main orchestrator engine that coordinates the analysis flow"""
     
-    def __init__(self, config: Optional[Config] = None, mode: str = "analysis"):
+    def __init__(self, config: Optional[Config] = None, mode: str = "analysis", 
+                 has_indexed_codebase: bool = False, collection_name: Optional[str] = None):
         self.config = config or Config.load()
         self.mode = mode  # 'analysis' or 'chat'
+        self.has_indexed_codebase = has_indexed_codebase
+        self.collection_name = collection_name or "codebase"
         self.tree_constructor = RepositoryTreeConstructor()
         self.report_generator = ReportGenerator()
         
@@ -32,6 +35,7 @@ class OrchestratorEngine:
         # Analysis state
         self.analysis_results = []
         self.analyzed_files = set()
+        self._codebase_indexer = None
         
     def initialize_agents(self, config_path: Optional[Path] = None, custom_system_prompt: Optional[str] = None):
         """Initialize the orchestrator and file analysis agents"""
@@ -44,7 +48,12 @@ class OrchestratorEngine:
             full_config.validate()
             
             # Initialize agents with the same config and mode
-            self.orchestrator_agent = OrchestratorAgent(full_config.agent, mode=self.mode, custom_system_prompt=custom_system_prompt)
+            self.orchestrator_agent = OrchestratorAgent(
+                full_config.agent, 
+                mode=self.mode, 
+                custom_system_prompt=custom_system_prompt,
+                has_indexed_codebase=self.has_indexed_codebase
+            )
             self.file_analysis_agent = FileAnalysisAgent(full_config.agent)
             
             logger.info(f"Orchestrator agents initialized successfully for {self.mode} mode")
@@ -106,7 +115,8 @@ class OrchestratorEngine:
         self.analyzed_files = set()
         
         # Create the file analysis handler that will be called by the orchestrator
-        async def file_analysis_handler(file_path: str, analysis_focus: str = "general") -> Dict[str, Any]:
+        async def file_analysis_handler(file_path: str, analysis_focus: str = "general", 
+                                      use_enhanced: bool = True) -> Dict[str, Any]:
             """Handle file analysis requests from the orchestrator"""
             logger.info(f"Orchestrator requested analysis of: {file_path} (focus: {analysis_focus})")
             
@@ -124,33 +134,70 @@ class OrchestratorEngine:
             if self.mode == "chat" and user_question:
                 repository_context['user_question'] = user_question
             
-            # Analyze the file
-            issues = await self.file_analysis_agent.analyze_file(
-                file_path=file_path,
-                root_path=root_path,
-                analysis_focus=analysis_focus,
-                repository_context=repository_context
-            )
-            
-            # Store results
-            self.analysis_results.extend(issues)
-            
-            # Return summary for the orchestrator
-            return {
-                'success': True,
-                'file_path': file_path,
-                'issues_found': len(issues),
-                'analysis_focus': analysis_focus,
-                'issues': [
-                    {
-                        'title': issue.title,
-                        'category': issue.category.value,
-                        'severity': issue.severity.value,
-                        'line_number': issue.line_number
+            # Use enhanced analysis if requested
+            if use_enhanced and hasattr(self.file_analysis_agent, 'analyze_file_enhanced'):
+                try:
+                    # Use enhanced analysis that returns next steps
+                    result = await self.file_analysis_agent.analyze_file_enhanced(
+                        file_path=file_path,
+                        root_path=root_path,
+                        analysis_focus=analysis_focus,
+                        repository_context=repository_context
+                    )
+                    
+                    # Store issues
+                    self.analysis_results.extend(result.issues)
+                    
+                    # Return enhanced summary including next steps
+                    return {
+                        'success': True,
+                        'file_path': file_path,
+                        'issues_found': len(result.issues),
+                        'analysis_focus': analysis_focus,
+                        'issues': [
+                            {
+                                'title': issue.title,
+                                'category': issue.category.value,
+                                'severity': issue.severity.value,
+                                'line_number': issue.line_number
+                            }
+                            for issue in result.issues
+                        ],
+                        'next_steps': result.next_steps if result.next_steps else []
                     }
-                    for issue in issues
-                ]
-            }
+                except Exception as e:
+                    logger.warning(f"Enhanced analysis failed, falling back to standard: {e}")
+                    use_enhanced = False
+            
+            # Standard analysis (fallback or if not enhanced)
+            if not use_enhanced:
+                # Analyze the file
+                issues = await self.file_analysis_agent.analyze_file(
+                    file_path=file_path,
+                    root_path=root_path,
+                    analysis_focus=analysis_focus,
+                    repository_context=repository_context
+                )
+                
+                # Store results
+                self.analysis_results.extend(issues)
+                
+                # Return summary for the orchestrator
+                return {
+                    'success': True,
+                    'file_path': file_path,
+                    'issues_found': len(issues),
+                    'analysis_focus': analysis_focus,
+                    'issues': [
+                        {
+                            'title': issue.title,
+                            'category': issue.category.value,
+                            'severity': issue.severity.value,
+                            'line_number': issue.line_number
+                        }
+                        for issue in issues
+                    ]
+                }
         
         # Create batch file analysis handler
         async def batch_file_analysis_handler(files: List[Dict[str, str]]) -> Dict[str, Any]:
@@ -252,12 +299,101 @@ class OrchestratorEngine:
             except Exception as e:
                 logger.error(f"query_file error for {file_path}: {e}")
                 return {"success": False, "error": str(e)}
+        
+        # query_codebase handler: search and answer questions using indexed codebase
+        async def query_codebase_handler(question: str, collection_name: Optional[str] = None, 
+                                       search_limit: int = 10) -> Dict[str, Any]:
+            try:
+                # Initialize indexer if needed
+                if not hasattr(self, '_codebase_indexer') or self._codebase_indexer is None:
+                    from ..codebase_indexer import QdrantCodebaseIndexer
+                    from ..core.config import settings
+                    
+                    self._codebase_indexer = QdrantCodebaseIndexer(
+                        collection_name=collection_name or self.collection_name,
+                        qdrant_url=settings.qdrant_url,
+                        qdrant_api_key=settings.qdrant_api_key,
+                        use_memory=settings.use_memory
+                    )
+                
+                # Perform hybrid search
+                results = self._codebase_indexer.hybrid_search(
+                    query=question,
+                    nlp_limit=search_limit,
+                    code_limit=search_limit
+                )
+                
+                # Get repository context
+                repository_context = {
+                    'total_files': tree_data['statistics']['total_files'],
+                    'main_languages': list(tree_data['statistics']['file_extensions'].keys())[:5],
+                    'project_type': self._detect_project_type(tree_data),
+                    'search_results': len(results.get('merged', []))
+                }
+                
+                # Format the answer from search results
+                if results.get('merged'):
+                    # Group results by file
+                    file_results = {}
+                    for result in results.get('merged', [])[:search_limit]:
+                        file_path = result.get('file_path', 'Unknown')
+                        if file_path not in file_results:
+                            file_results[file_path] = []
+                        file_results[file_path].append(result)
+                    
+                    # Build the answer
+                    answer_parts = [f"Based on searching the indexed codebase for '{question}', here's what I found:\n"]
+                    
+                    for file_path, chunks in file_results.items():
+                        answer_parts.append(f"\n**{file_path}:**")
+                        for chunk in chunks:
+                            code_type = chunk.get('code_type', 'code')
+                            content = chunk.get('content', '')
+                            docstring = chunk.get('docstring', '')
+                            
+                            if code_type != 'code':
+                                answer_parts.append(f"- {code_type.title()}:")
+                            
+                            # Add content preview (first few lines)
+                            content_lines = content.strip().split('\n')
+                            preview = '\n'.join(content_lines[:5])
+                            if len(content_lines) > 5:
+                                preview += '\n    ...'
+                            answer_parts.append(f"```\n{preview}\n```")
+                            
+                            if docstring:
+                                answer_parts.append(f"  Documentation: {docstring}")
+                    
+                    answer = '\n'.join(answer_parts)
+                    
+                    # Add summary
+                    answer += f"\n\nFound {len(results.get('merged', []))} relevant code chunks across {len(file_results)} files."
+                else:
+                    answer = "No relevant code found in the indexed codebase for this query."
+                
+                return {
+                    "success": True, 
+                    "answer": answer,
+                    "search_results": len(results.get('merged', [])),
+                    "top_files": list(set(r.get('file_path', '') for r in results.get('merged', [])[:5]))
+                }
+            except Exception as e:
+                logger.error(f"query_codebase error: {e}")
+                return {"success": False, "error": str(e)}
 
-        self.orchestrator_agent.function_handlers = {
+        
+        # Base function handlers
+        function_handlers = {
             "query_file": query_file_handler,
             "analyze_file": file_analysis_handler,
             "analyze_files_batch": batch_file_analysis_handler
         }
+        
+        # Only add query_codebase if codebase is indexed
+        if self.has_indexed_codebase:
+            function_handlers["query_codebase"] = query_codebase_handler
+            
+        self.orchestrator_agent.function_handlers = function_handlers
         logger.info(f"Function handlers set: {list(self.orchestrator_agent.function_handlers.keys())}")
         
         # Run the orchestrator analysis

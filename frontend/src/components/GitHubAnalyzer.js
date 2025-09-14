@@ -6,6 +6,7 @@ import Button from './Button';
 import Input from './Input';
 import LoadingSpinner from './LoadingSpinner';
 import StatusCard from './StatusCard';
+import CodebaseIndexing from './CodebaseIndexing';
 
 const GitHubAnalyzer = () => {
   const [githubUrl, setGithubUrl] = useState('');
@@ -144,6 +145,14 @@ const GitHubAnalyzer = () => {
                 )}
               </Button>
             </div>
+
+            <div className="divider-section">
+              <div className="divider-line"></div>
+              <span className="divider-text">OR</span>
+              <div className="divider-line"></div>
+            </div>
+
+            <CodebaseIndexing />
 
             {isAnalyzing && (
               <div className="progress-section">

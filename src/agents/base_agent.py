@@ -4,11 +4,12 @@ import json
 import logging
 import asyncio
 import uuid
+import time
 from typing import Dict, Any, List, Optional, Type, TypeVar, Callable
 from pathlib import Path
 
-from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_ollama import ChatOllama
+from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_core.messages import HumanMessage, SystemMessage, AIMessage, ToolMessage
 from langchain_core.tools import tool
 from langchain_core.output_parsers import PydanticOutputParser
@@ -47,13 +48,14 @@ class BaseAgent:
                 num_predict=config.max_tokens
             )
         else:
-            # Initialize LangChain with Gemini
+            # Initialize Gemini (default cloud LLM)
             self.llm = ChatGoogleGenerativeAI(
-                model=config.model_name,
+                model=config.gemini_model,
                 google_api_key=config.google_api_key,
                 temperature=config.temperature,
                 max_output_tokens=config.max_tokens
             )
+
         
         # Create prompt template
         self.prompt_template = ChatPromptTemplate.from_messages([
@@ -192,11 +194,19 @@ class BaseAgent:
                 HumanMessage(content=full_prompt)
             ]
             
-            # Generate response
+            # Generate response with timing
+            start_time = time.time()
+            logger.info(f"[LLM DEBUG] {self.agent_name} - Invoking LLM for generate_response")
+            logger.debug(f"[LLM DEBUG] Prompt preview (first 500 chars): {full_prompt[:500]}...")
+            
             response = await self.llm.ainvoke(messages)
+            
+            elapsed_time = time.time() - start_time
+            logger.info(f"[LLM DEBUG] {self.agent_name} - LLM response received in {elapsed_time:.2f}s")
             
             # Extract content
             response_text = response.content if hasattr(response, 'content') else str(response)
+            logger.debug(f"[LLM DEBUG] Response preview (first 500 chars): {response_text[:500]}...")
             
             # Add AI response to history if session exists
             if self.current_session_id and self.message_history_manager:
@@ -246,11 +256,20 @@ class BaseAgent:
                 HumanMessage(content=full_prompt)
             ]
             
-            # Generate response
+            # Generate response with timing
+            start_time = time.time()
+            logger.info(f"[LLM DEBUG] {self.agent_name} - Invoking LLM for generate_structured_response")
+            logger.debug(f"[LLM DEBUG] Prompt preview (first 500 chars): {full_prompt[:500]}...")
+            logger.debug(f"[LLM DEBUG] Response schema: {response_schema.__name__}")
+            
             response = await self.llm.ainvoke(messages)
+            
+            elapsed_time = time.time() - start_time
+            logger.info(f"[LLM DEBUG] {self.agent_name} - LLM response received in {elapsed_time:.2f}s")
             
             # Extract content
             response_text = response.content if hasattr(response, 'content') else str(response)
+            logger.debug(f"[LLM DEBUG] Response preview (first 500 chars): {response_text[:500]}...")
             
             # Parse the structured response
             try:
@@ -339,7 +358,15 @@ class BaseAgent:
             ]
             
             # First invocation with tools
+            start_time = time.time()
+            logger.info(f"[LLM DEBUG] {self.agent_name} - Invoking LLM with function tools")
+            logger.debug(f"[LLM DEBUG] Available functions: {[f['function']['name'] if 'function' in f else f.get('name', 'unknown') for f in function_declarations]}")
+            logger.debug(f"[LLM DEBUG] Prompt preview (first 500 chars): {full_prompt[:500]}...")
+            
             response = await llm_with_tools.ainvoke(messages)
+            
+            elapsed_time = time.time() - start_time
+            logger.info(f"[LLM DEBUG] {self.agent_name} - Initial LLM response with tools received in {elapsed_time:.2f}s")
             
             # Check if the response contains tool calls
             if hasattr(response, 'tool_calls') and response.tool_calls:
@@ -383,25 +410,58 @@ class BaseAgent:
                 # Add tool messages to conversation
                 messages.extend([response] + tool_messages)
                 
+                # Add a clear instruction for structured output
+                schema_name = response_schema.__name__
+                final_prompt = f"""Based on the function execution results above, provide your final response as a {schema_name}. 
+                
+                Important: 
+                - Do NOT make any more function calls
+                - Provide ONLY the structured response with the required fields
+                - For AnalysisResponseSchema: provide 'issues' (list, required) and optionally 'summary' (dict or null)
+                - For ChatResponseSchema: provide 'answer' (string), 'files_to_analyze' (list), and 'analysis_complete' (boolean)"""
+                
+                messages.append(HumanMessage(content=final_prompt))
+                
                 # Use with_structured_output for the final response
+                start_time = time.time()
+                logger.info(f"[LLM DEBUG] {self.agent_name} - Invoking LLM for final structured response after tool execution")
+                
                 structured_llm = self.llm.with_structured_output(response_schema)
                 final_result = await structured_llm.ainvoke(messages)
+                
+                elapsed_time = time.time() - start_time
+                logger.info(f"[LLM DEBUG] {self.agent_name} - Final structured response received in {elapsed_time:.2f}s")
+                logger.debug(f"[LLM DEBUG] Final result type: {type(final_result).__name__}")
                 
                 # Cache the result
                 await self._add_to_cache(cache_key, final_result.model_dump_json())
                 return final_result
                 
             else:
-                # No tool calls detected - return schema-appropriate default
-                logger.info("No tool calls detected in response")
-                try:
-                    if 'issues' in response_schema.model_fields:
-                        return response_schema.model_validate({"issues": []})
-                    if 'answer' in response_schema.model_fields:
-                        return response_schema.model_validate({"answer": "", "files_to_analyze": [], "analysis_complete": False})
-                except Exception:
-                    pass
-                return response_schema.model_validate({})
+                # No tool calls detected - still need to get structured response
+                logger.info("No tool calls detected in response, requesting structured output")
+                
+                # Add the AI response to messages
+                messages.append(response)
+                
+                # Add instruction for structured output
+                schema_name = response_schema.__name__
+                final_prompt = f"""Please provide your response as a {schema_name} in the required structured format. 
+                
+                Important: 
+                - Provide ONLY the structured response with the required fields
+                - For AnalysisResponseSchema: provide 'issues' (list, required) and optionally 'summary' (dict or null)
+                - For ChatResponseSchema: provide 'answer' (string), 'files_to_analyze' (list), and 'analysis_complete' (boolean)"""
+                
+                messages.append(HumanMessage(content=final_prompt))
+                
+                # Get structured response
+                structured_llm = self.llm.with_structured_output(response_schema)
+                final_result = await structured_llm.ainvoke(messages)
+                
+                # Cache the result
+                await self._add_to_cache(cache_key, final_result.model_dump_json())
+                return final_result
             
         except Exception as e:
             logger.error(f"Error generating structured response with functions: {e}")

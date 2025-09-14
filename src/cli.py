@@ -8,17 +8,47 @@ from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, TaskPr
 from rich.panel import Panel
 from rich.text import Text
 from rich.align import Align
-from rich.prompt import Confirm, Prompt
+from rich.prompt import Prompt
 import json
 import logging
-import yaml
+import asyncio
 
+import httpx
+
+from .core.config import settings
 from .core.analysis_engine import AnalysisEngine
-from .analyzers.analyzer import IssueSeverity
+from .core.orchestrator_engine import OrchestratorEngine
+from .codebase_indexer import MultiLanguageCodebaseParser, QdrantCodebaseIndexer
+from .utils import FileFilter
 
 
 console = Console()
 logger = logging.getLogger(__name__)
+
+
+def check_ollama_running(model: str = "llama3.2") -> bool:
+    """Check if Ollama is running by attempting to connect to its API"""
+    try:
+        # Check if Ollama API is accessible
+        response = httpx.get("http://localhost:11434/api/tags", timeout=2.0)
+        if response.status_code == 200:
+            # Check if the specified model is available
+            models = response.json().get("models", [])
+            model_names = [m.get("name", "").split(":")[0] for m in models]
+            
+            if model in model_names:
+                return True
+            else:
+                console.print(f"[bold red]❌ Ollama is running but model '{model}' is not installed.[/bold red]")
+                console.print(f"[yellow]Available models: {', '.join(model_names)}[/yellow]")
+                console.print(f"[yellow]To install the model, run: [bold]ollama pull {model}[/bold][/yellow]")
+                return False
+        return False
+    except (httpx.ConnectError, httpx.TimeoutException):
+        return False
+    except Exception as e:
+        logger.debug(f"Error checking Ollama status: {e}")
+        return False
 
 
 def show_banner():
@@ -56,31 +86,124 @@ def main():
 @main.command()
 @click.argument('path', type=click.Path(exists=True))
 @click.option('--output', '-o', type=click.Path(), help='💾 Output file for report')
-@click.option('--format', '-f', type=click.Choice(['console', 'json', 'html']), default='console', help='📊 Output format')
-@click.option('--ai/--no-ai', default=True, help='🤖 Enable AI-powered analysis (requires GOOGLE_API_KEY)')
+@click.option('--format', '-f', type=click.Choice(['console', 'json']), default='console', help='📊 Output format')
 @click.option('--config', '-c', type=click.Path(exists=True), help='⚙️  Configuration file path')
-@click.option('--use-local', is_flag=True, help='🏠 Use local Ollama LLM instead of Google Gemini')
+@click.option('--use-local', is_flag=True, help='🏠 Use local Ollama LLM instead of Gemini')
 @click.option('--ollama-model', default='llama3.2', help='🤖 Ollama model to use (default: llama3.2)')
-def analyze(path, output, format, ai, config, use_local, ollama_model):
+@click.option('--index', is_flag=True, help='🔍 Index codebase for RAG before analysis')
+@click.option('--collection', default=None, help='📦 Qdrant collection name (used with --index)')
+@click.option('--qdrant-url', default=None, help='🌐 Qdrant server URL (used with --index)')
+@click.option('--qdrant-api-key', default=None, help='🔑 Qdrant API key (used with --index)')
+def analyze(path, output, format, config, use_local, ollama_model, index, collection, qdrant_url, qdrant_api_key):
     """🎯 Analyze code quality using intelligent orchestrator flow
     
     Uses an intelligent orchestrator that strategically selects files to analyze
     and coordinates the analysis process for comprehensive coverage.
+    
+    With the --index flag, the codebase will be indexed into Qdrant for RAG
+    (Retrieval-Augmented Generation) before analysis, enabling semantic search
+    capabilities for more context-aware analysis.
     """                                                                                                                                                                                                                     
-    path = Path(path)                                                                   
+    path = Path(path)
+    # Use config values if CLI parameters not provided
+    if index:
+        qdrant_url = qdrant_url or settings.qdrant_url
+        qdrant_api_key = qdrant_api_key or settings.qdrant_api_key
     
     # Show initial info
-    llm_mode = "Local (Ollama)" if use_local else "Cloud (Google Gemini)"
-    llm_model = ollama_model if use_local else "gemini-2.5-flash"
+    if use_local:
+        llm_mode = "Local (Ollama)"
+        llm_model = ollama_model
+    else:
+        llm_mode = "Cloud (Gemini)"
+        llm_model = settings.gemini_model
     
-    console.print(Panel.fit(
+    info_text = (
         f"[bold cyan]📁 Analyzing:[/bold cyan] {path.absolute()}\n"
         f"[bold cyan]🎯 Analysis Mode:[/bold cyan] Orchestrator Flow\n"
-        f"[bold cyan]🤖 LLM Mode:[/bold cyan] {llm_mode} ({llm_model})",
+        f"[bold cyan]🤖 LLM Mode:[/bold cyan] {llm_mode} ({llm_model})"
+    )
+    
+    if index:
+        collection = collection or path.name
+        info_text += f"\n[bold cyan]🔍 RAG Mode:[/bold cyan] Enabled (Collection: {collection})"
+    
+    console.print(Panel.fit(
+        info_text,
         title="[bold]Analysis Configuration[/bold]",
         border_style="cyan"
     ))
     console.print()
+    
+    # Check if Ollama is running when using local mode
+    if use_local:
+        if not check_ollama_running(ollama_model):
+            console.print("[bold red]❌ Ollama is not running or not accessible.[/bold red]")
+            console.print("[yellow]Please ensure Ollama is running with the following command:[/yellow]")
+            console.print("[bold]ollama serve[/bold]")
+            console.print()
+            console.print("[yellow]Then ensure your model is installed:[/yellow]")
+            console.print(f"[bold]ollama pull {ollama_model}[/bold]")
+            console.print()
+            console.print("[dim]For more information, visit: https://ollama.ai[/dim]")
+            raise click.Abort()
+    else:
+        # Check for Google API key when not using local mode
+        if not settings.google_api_key:
+            console.print("[bold red]❌ Google API key not found.[/bold red]")
+            console.print("[yellow]Please set the GOOGLE_API_KEY environment variable:[/yellow]")
+            console.print("[bold]export GOOGLE_API_KEY='your-api-key'[/bold]")
+            console.print()
+            console.print("[dim]Get your API key at: https://aistudio.google.com/app/apikey[/dim]")
+            raise click.Abort()
+    
+    # Index codebase if requested
+    if index:
+        console.print("[bold cyan]🔍 Indexing codebase for RAG...[/bold cyan]")
+        with Progress(
+            SpinnerColumn(style="cyan"),
+            TextColumn("[progress.description]{task.description}"),
+            BarColumn(style="cyan"),
+            TaskProgressColumn(),
+            console=console
+        ) as progress:
+            # Parse codebase
+            task = progress.add_task("🔍 Parsing codebase...", total=None)
+            # Create parser with file filtering support
+            file_filter = FileFilter.from_path(path)
+            parser = MultiLanguageCodebaseParser(file_filter=file_filter)
+            
+            if path.is_file():
+                chunks = parser.parse_file(str(path))
+            else:
+                chunks = parser.parse_directory(str(path))
+            
+            progress.update(task, completed=True)
+            console.print(f"[green]✅ Found {len(chunks)} code chunks[/green]")
+            
+            if chunks:
+                # Initialize indexer  
+                task = progress.add_task("🚀 Initializing Qdrant indexer...", total=None)
+                indexer = QdrantCodebaseIndexer(
+                    collection_name=collection,
+                    qdrant_url=qdrant_url,
+                    qdrant_api_key=qdrant_api_key,
+                    use_memory=settings.use_memory
+                )
+                progress.update(task, completed=True)
+                
+                # Index chunks
+                task = progress.add_task("📥 Indexing chunks...", total=len(chunks))
+                batch_size = 100
+                
+                for i in range(0, len(chunks), batch_size):
+                    batch = chunks[i:i + batch_size]
+                    indexer.index_chunks(batch, batch_size=batch_size)
+                    progress.update(task, completed=min(i + batch_size, len(chunks)))
+                
+                console.print("[green]✅ Indexing complete![/green]\n")
+            else:
+                console.print("[yellow]⚠️  No supported files found to index[/yellow]\n")
     
     with Progress(
         SpinnerColumn(style="cyan"),
@@ -99,7 +222,7 @@ def analyze(path, output, format, ai, config, use_local, ollama_model):
         
         progress.update(task, description="🧠 Configuring orchestrator analysis...")
         
-        # Create temporary config with local LLM settings if needed
+        # Create temporary config with LLM settings if needed
         if use_local:
             import tempfile
             import yaml
@@ -113,6 +236,7 @@ def analyze(path, output, format, ai, config, use_local, ollama_model):
             # Update with local LLM settings
             if 'agent' not in config_data:
                 config_data['agent'] = {}
+            
             config_data['agent']['use_local'] = True
             config_data['agent']['ollama_model'] = ollama_model
             
@@ -125,7 +249,11 @@ def analyze(path, output, format, ai, config, use_local, ollama_model):
         else:
             config_path = Path(config) if config else None
         
-        engine.enable_analysis(config_path)
+        engine.enable_analysis(
+            config_path,
+            has_indexed_codebase=index,
+            collection_name=collection
+        )
         
         if not engine.enable_orchestrator:
             console.print("[red]❌ Error: Orchestrator analysis could not be enabled.[/red]")
@@ -137,7 +265,6 @@ def analyze(path, output, format, ai, config, use_local, ollama_model):
         
         progress.update(task, description="🎯 Orchestrator analyzing files...")
         # Run async analysis
-        import asyncio
         result = asyncio.run(engine.analyze_repository(path))
         progress.update(task, advance=40)
         
@@ -332,17 +459,22 @@ def serve(host, port):
 @main.command()
 @click.argument('path', type=click.Path(exists=True), required=False)
 @click.option('--config', '-c', type=click.Path(exists=True), help='⚙️  Configuration file path')
-@click.option('--use-local', is_flag=True, help='🏠 Use local Ollama LLM instead of Google Gemini')
+@click.option('--use-local', is_flag=True, help='🏠 Use local Ollama LLM instead of Gemini')
 @click.option('--ollama-model', default='llama3.2', help='🤖 Ollama model to use (default: llama3.2)')
-def chat(path, config, use_local, ollama_model):
+@click.option('--index', is_flag=True, help='🔍 Index codebase for RAG before chat')
+@click.option('--collection', default=None, help='📦 Qdrant collection name (used with --index)')
+@click.option('--qdrant-url', default=None, help='🌐 Qdrant server URL (used with --index)')
+@click.option('--qdrant-api-key', default=None, help='🔑 Qdrant API key (used with --index)')
+def chat(path, config, use_local, ollama_model, index, collection, qdrant_url, qdrant_api_key):
     """💬 Chat with your codebase - Ask questions and get AI-powered answers
     
     Have a conversation with your code! Ask questions about architecture,
     functionality, or get help understanding any part of your codebase.
-
+    
+    With the --index flag, the codebase will be indexed into Qdrant for RAG
+    (Retrieval-Augmented Generation) before starting the chat, enabling semantic
+    search to provide more accurate and context-aware answers.
     """
-    import asyncio
-    from .core.orchestrator_engine import OrchestratorEngine
     
     # Get path if not provided
     if not path:
@@ -353,18 +485,101 @@ def chat(path, config, use_local, ollama_model):
         console.print(f"[red]❌ Error: Path '{path}' does not exist![/red]")
         return
     
+    # Use config values if CLI parameters not provided
+    if index:
+        qdrant_url = qdrant_url or settings.qdrant_url
+        qdrant_api_key = qdrant_api_key or settings.qdrant_api_key
+    
     # Show chat interface
     console.print()
-    console.print(Panel(
+    info_text = (
         "[bold cyan]💬 Welcome to Codet Chat Mode![/bold cyan]\n\n"
         f"📁 Repository: [bold]{path.absolute()}[/bold]\n"
-        f"🤖 LLM Mode: [bold]{'Local (Ollama)' if use_local else 'Cloud (Google Gemini)'}[/bold]\n\n"
-        "[dim]Type 'exit' or 'quit' to end the conversation[/dim]",
+        f"🤖 LLM Mode: [bold]{'Local (Ollama)' if use_local else 'Cloud (Gemini)'}[/bold]"
+    )
+    
+    if index:
+        info_text += f"\n🔍 RAG Mode: [bold]Enabled (Collection: {collection})[/bold]"
+    
+    info_text += "\n\n[dim]Type 'exit' or 'quit' to end the conversation[/dim]"
+    
+    console.print(Panel(
+        info_text,
         title="[bold]Chat Interface[/bold]",
         border_style="cyan",
         padding=(1, 2)
     ))
     console.print()
+    
+    # Check if Ollama is running when using local mode
+    if use_local:
+        if not check_ollama_running(ollama_model):
+            console.print("[bold red]❌ Ollama is not running or not accessible.[/bold red]")
+            console.print("[yellow]Please ensure Ollama is running with the following command:[/yellow]")
+            console.print("[bold]ollama serve[/bold]")
+            console.print()
+            console.print("[yellow]Then ensure your model is installed:[/yellow]")
+            console.print(f"[bold]ollama pull {ollama_model}[/bold]")
+            console.print()
+            console.print("[dim]For more information, visit: https://ollama.ai[/dim]")
+            raise click.Abort()
+    else:
+        # Check for Google API key when not using local mode
+        if not settings.google_api_key:
+            console.print("[bold red]❌ Google API key not found.[/bold red]")
+            console.print("[yellow]Please set the GOOGLE_API_KEY environment variable:[/yellow]")
+            console.print("[bold]export GOOGLE_API_KEY='your-api-key'[/bold]")
+            console.print()
+            console.print("[dim]Get your API key at: https://aistudio.google.com/app/apikey[/dim]")
+            raise click.Abort()
+    
+    # Index codebase if requested
+    if index:
+        console.print("[bold cyan]🔍 Indexing codebase for RAG...[/bold cyan]")
+        with Progress(
+            SpinnerColumn(style="cyan"),
+            TextColumn("[progress.description]{task.description}"),
+            BarColumn(style="cyan"),
+            TaskProgressColumn(),
+            console=console
+        ) as progress:
+            # Parse codebase
+            task = progress.add_task("🔍 Parsing codebase...", total=None)
+            # Create parser with file filtering support
+            file_filter = FileFilter.from_path(path)
+            parser = MultiLanguageCodebaseParser(file_filter=file_filter)
+            
+            if path.is_file():
+                chunks = parser.parse_file(str(path))
+            else:
+                chunks = parser.parse_directory(str(path))
+            
+            progress.update(task, completed=True)
+            console.print(f"[green]✅ Found {len(chunks)} code chunks[/green]")
+            
+            if chunks:
+                # Initialize indexer  
+                task = progress.add_task("🚀 Initializing Qdrant indexer...", total=None)
+                indexer = QdrantCodebaseIndexer(
+                    collection_name=collection,
+                    qdrant_url=qdrant_url,
+                    qdrant_api_key=qdrant_api_key,
+                    use_memory=settings.use_memory
+                )
+                progress.update(task, completed=True)
+                
+                # Index chunks
+                task = progress.add_task("📥 Indexing chunks...", total=len(chunks))
+                batch_size = 100
+                
+                for i in range(0, len(chunks), batch_size):
+                    batch = chunks[i:i + batch_size]
+                    indexer.index_chunks(batch, batch_size=batch_size)
+                    progress.update(task, completed=min(i + batch_size, len(chunks)))
+                
+                console.print("[green]✅ Indexing complete![/green]\n")
+            else:
+                console.print("[yellow]⚠️  No supported files found to index[/yellow]\n")
     
     # Initialize chat engine
     with Progress(
@@ -375,10 +590,16 @@ def chat(path, config, use_local, ollama_model):
     ) as progress:
         task = progress.add_task("🚀 Initializing chat engine...", total=100)
         
-        chat_engine = OrchestratorEngine(mode="chat")
+        collection = collection or path.name
+        
+        chat_engine = OrchestratorEngine(
+            mode="chat",
+            has_indexed_codebase=index,
+            collection_name=collection
+        )
         progress.update(task, advance=50)
         
-        # Create temporary config with local LLM settings if needed
+        # Create temporary config with LLM settings if needed
         if use_local:
             import tempfile
             import yaml
@@ -392,6 +613,7 @@ def chat(path, config, use_local, ollama_model):
             # Update with local LLM settings
             if 'agent' not in config_data:
                 config_data['agent'] = {}
+            
             config_data['agent']['use_local'] = True
             config_data['agent']['ollama_model'] = ollama_model
             
@@ -419,7 +641,6 @@ def chat(path, config, use_local, ollama_model):
     console.print("[green]✅ Chat engine ready! Ask me anything about your codebase.[/green]\n")
     
     # Create and persist a single event loop for the chat session
-    import asyncio
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
 

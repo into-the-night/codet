@@ -30,6 +30,13 @@ An intelligent code quality analysis tool that analyzes codebases, identifies qu
 - Follow-up questions and clarifications
 - **Redis Integration**: Message history and response caching for improved performance
 
+### 🔎 Codebase Indexing & Semantic Search
+- **AST-based parsing**: Intelligent extraction of code constructs
+- **Dual embedding system**: Natural language and code-specific embeddings
+- **Hybrid search**: Combines semantic and code similarity for best results
+- **Fast retrieval**: Vector search with Qdrant for instant results
+- **Rich context**: Preserves metadata like file paths, signatures, and docstrings
+
 ## Project Structure
 
 ```
@@ -69,6 +76,7 @@ codet/
 - Node.js 16+ (for frontend)
 - uv (Python package manager) [[memory:5461534]]
 - Redis server (optional, for caching and message history)
+- Qdrant vector database (optional, for codebase indexing and semantic search)
 
 ### Backend Setup
 
@@ -98,6 +106,15 @@ docker-compose -f docker-compose.redis.yml up -d
 # macOS: brew install redis
 ```
 
+4. (Optional) Start Qdrant server for codebase indexing:
+```bash
+# Using Docker Compose
+docker-compose -f docker-compose.qdrant.yml up -d
+
+# Or install Qdrant locally
+# Visit: https://qdrant.tech/documentation/guides/installation/
+```
+
 ### Frontend Setup
 
 1. Navigate to frontend directory:
@@ -116,22 +133,22 @@ npm install
 
 Analyze a repository using the intelligent orchestrator flow:
 ```bash
-codet analyze /path/to/your/code --config config.yaml
+uv run codet analyze /path/to/your/code --config config.yaml
 ```
 
 Analyze specific languages:
 ```bash
-codet analyze /path/to/your/code -l python -l javascript --config config.yaml
+uv run codet analyze /path/to/your/code -l python -l javascript --config config.yaml
 ```
 
 Generate JSON report:
 ```bash
-codet analyze /path/to/your/code -f json -o report.json --config config.yaml
+uv run codet analyze /path/to/your/code -f json -o report.json --config config.yaml
 ```
 
 With file limits and other options:
 ```bash
-codet analyze /path/to/your/code \
+uv run codet analyze /path/to/your/code \
   --config config.yaml \
   --languages python javascript \
   --max-files 50 \
@@ -143,7 +160,7 @@ codet analyze /path/to/your/code \
 
 Start the API server:
 ```bash
-codet serve
+uv run codet serve
 ```
 
 In a separate terminal, start the frontend:
@@ -166,6 +183,56 @@ curl -X POST "http://localhost:8000/api/analyze" \
 ```
 
 API documentation is available at `http://localhost:8000/docs`
+
+### Codebase Indexing and Semantic Search
+
+Index your codebase for intelligent semantic search:
+
+#### Command Line
+
+Index a codebase:
+```bash
+uv run codet index /path/to/your/project
+```
+
+With custom collection name and batch size:
+```bash
+uv run codet index /path/to/your/project --collection my-project --batch-size 200
+```
+
+Search the indexed codebase:
+```bash
+# Natural language search
+uv run codet search "how does authentication work"
+
+# Code-to-code similarity search
+uv run codet search "def process_user_data" --type code
+
+# Hybrid search (combines both approaches)
+uv run codet search "calculate total price" --type hybrid --limit 5
+```
+
+#### Web Interface
+
+1. Navigate to the main page
+2. Click on "Index Codebase for Search"
+3. Enter the path to your project (supports Python, JavaScript, TypeScript)
+4. Click "Start Indexing"
+5. Use the chat interface to search your indexed codebase
+
+#### Features
+
+- **AST-based parsing**: Extracts functions, classes, methods, enums, and more
+- **Dual embeddings**: 
+  - Natural language embeddings for semantic search
+  - Code-specific embeddings for code similarity
+- **Hybrid search**: Combines both embedding types for best results
+- **Rich metadata**: Preserves context like file paths, line numbers, and docstrings
+
+**Supported Languages**:
+- Python (.py)
+- JavaScript (.js, .jsx, .mjs)
+- TypeScript (.ts, .tsx)
 
 ## How It Works
 

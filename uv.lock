@@ -265,6 +265,7 @@ dependencies = [
     { name = "fastapi" },
     { name = "gitpython" },
     { name = "hiredis" },
+    { name = "httpx" },
     { name = "isort" },
     { name = "langchain" },
     { name = "langchain-core" },
@@ -272,6 +273,7 @@ dependencies = [
     { name = "langchain-ollama" },
     { name = "mypy" },
     { name = "pydantic" },
+    { name = "pydantic-settings" },
     { name = "pygments" },
     { name = "pylint" },
     { name = "pytest" },
@@ -297,6 +299,7 @@ requires-dist = [
     { name = "fastapi", specifier = ">=0.104.0" },
     { name = "gitpython", specifier = ">=3.1.0" },
     { name = "hiredis", specifier = ">=2.2.0" },
+    { name = "httpx", specifier = ">=0.25.0" },
     { name = "isort", specifier = ">=5.12.0" },
     { name = "langchain", specifier = ">=0.1.0" },
     { name = "langchain-core", specifier = ">=0.1.0" },
@@ -304,6 +307,7 @@ requires-dist = [
     { name = "langchain-ollama", specifier = ">=0.1.0" },
     { name = "mypy", specifier = ">=1.7.0" },
     { name = "pydantic", specifier = ">=2.0.0" },
+    { name = "pydantic-settings", specifier = ">=2.0.0" },
     { name = "pygments", specifier = ">=2.16.0" },
     { name = "pylint", specifier = ">=3.0.0" },
     { name = "pytest", specifier = ">=7.4.0" },
@@ -1401,6 +1405,20 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/1a/1a/abbd63d47e1d9b0d632fee6bb15785d0889c8a6e0a6c3b5a8e28ac1ec5d2/pydantic_core-2.33.2-pp39-pypy39_pp73-musllinux_1_1_armv7l.whl", hash = "sha256:3abcd9392a36025e3bd55f9bd38d908bd17962cc49bc6da8e7e96285336e2bca", size = 2237859, upload-time = "2025-04-23T18:33:45.56Z" },
     { url = "https://files.pythonhosted.org/packages/80/1c/fa883643429908b1c90598fd2642af8839efd1d835b65af1f75fba4d94fe/pydantic_core-2.33.2-pp39-pypy39_pp73-musllinux_1_1_x86_64.whl", hash = "sha256:3a1c81334778f9e3af2f8aeb7a960736e5cab1dfebfb26aabca09afd2906c039", size = 2239059, upload-time = "2025-04-23T18:33:47.735Z" },
     { url = "https://files.pythonhosted.org/packages/d4/29/3cade8a924a61f60ccfa10842f75eb12787e1440e2b8660ceffeb26685e7/pydantic_core-2.33.2-pp39-pypy39_pp73-win_amd64.whl", hash = "sha256:2807668ba86cb38c6817ad9bc66215ab8584d1d304030ce4f0887336f28a5e27", size = 2066661, upload-time = "2025-04-23T18:33:49.995Z" },
+]
+
+[[package]]
+name = "pydantic-settings"
+version = "2.10.1"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "pydantic" },
+    { name = "python-dotenv" },
+    { name = "typing-inspection" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/68/85/1ea668bbab3c50071ca613c6ab30047fb36ab0da1b92fa8f17bbc38fd36c/pydantic_settings-2.10.1.tar.gz", hash = "sha256:06f0062169818d0f5524420a360d632d5857b83cffd4d42fe29597807a1614ee", size = 172583, upload-time = "2025-06-24T13:26:46.841Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/58/f0/427018098906416f580e3cf1366d3b1abfb408a0652e9f31600c24a1903c/pydantic_settings-2.10.1-py3-none-any.whl", hash = "sha256:a60952460b99cf661dc25c29c0ef171721f98bfcb52ef8d9ea4c943d7c8cc796", size = 45235, upload-time = "2025-06-24T13:26:45.485Z" },
 ]
 
 [[package]]

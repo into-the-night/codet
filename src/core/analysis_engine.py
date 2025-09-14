@@ -30,7 +30,9 @@ class AnalysisEngine:
         self.orchestrator_engine = None
         self.enable_orchestrator = False
         
-    def enable_analysis(self, config_path: Optional[Path] = None):
+    def enable_analysis(self, config_path: Optional[Path] = None, 
+                       has_indexed_codebase: bool = False, 
+                       collection_name: Optional[str] = None):
         """Enable orchestrator-powered analysis (main analysis method)"""
         try:
             full_config = Config.load(config_path)
@@ -38,7 +40,11 @@ class AnalysisEngine:
             
             # Use standard orchestrator with parallel file analysis support
             logger.info("Using orchestrator with parallel file analysis support")
-            self.orchestrator_engine = OrchestratorEngine(full_config)
+            self.orchestrator_engine = OrchestratorEngine(
+                full_config,
+                has_indexed_codebase=has_indexed_codebase,
+                collection_name=collection_name
+            )
             self.orchestrator_engine.initialize_agents(config_path)
             self.enable_orchestrator = True
             logger.info("Orchestrator analysis enabled successfully")

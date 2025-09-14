@@ -17,86 +17,127 @@ logger = logging.getLogger(__name__)
 class OrchestratorAgent(BaseAgent):
     """Main orchestrator that decides which files to analyze and coordinates the analysis flow"""
     
-    def __init__(self, config: AgentConfig, mode: str = "analysis", custom_system_prompt: Optional[str] = None):
+    def __init__(self, config: AgentConfig, mode: str = "analysis", custom_system_prompt: Optional[str] = None,
+                 has_indexed_codebase: bool = False):
         super().__init__(config)
         self.analysis_results = []  # Store results from each analysis iteration
         self.analyzed_files = set()  # Track which files have been analyzed
         self.max_iterations = 10  # Prevent infinite loops
         self.current_iteration = 0
         self.mode = mode  # 'analysis' or 'chat'
+        self.has_indexed_codebase = has_indexed_codebase  # Track if codebase is indexed
         self.custom_system_prompt = custom_system_prompt  # Allow custom prompts
         self.user_question = None  # Store user question for chat mode
         self.chat_answer = None  # Store final answer for chat mode
         
         self.analyze_file_function = {
-            "name": "analyze_file",
-            "description": "Analyzes a specific file to understand its content, structure, and functionality for answering questions about the codebase.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "file_path": {
-                        "type": "string",
-                        "description": "The path to the file to analyze, relative to the repository root."
+            "type": "function",
+            "function": {
+                "name": "analyze_file",
+                "description": "Analyzes a specific file to understand its content, structure, and functionality for answering questions about the codebase.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "file_path": {
+                            "type": "string",
+                            "description": "The path to the file to analyze, relative to the repository root."
+                        },
+                        "analysis_focus": {
+                            "type": "string",
+                            "description": "Specific focus area for analysis (e.g., 'security', 'performance', 'general')",
+                            "default": "general"
+                        }
                     },
-                    "analysis_focus": {
-                        "type": "string",
-                        "description": "Specific focus area for analysis (e.g., 'security', 'performance', 'general')",
-                        "default": "general"
-                    }
-                },
-                "required": ["file_path"]
+                    "required": ["file_path"]
+                }
             }
         }
         
         self.analyze_files_batch_function = {
-            "name": "analyze_files_batch",
-            "description": "Analyzes multiple files in parallel for faster processing. Use this when you want to analyze several files at once.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "files": {
-                        "type": "array",
-                        "description": "Array of files to analyze in parallel",
-                        "items": {
-                            "type": "object",
-                            "properties": {
-                                "file_path": {
-                                    "type": "string",
-                                    "description": "The path to the file to analyze"
+            "type": "function",
+            "function": {
+                "name": "analyze_files_batch",
+                "description": "Analyzes multiple files in parallel for faster processing. Use this when you want to analyze several files at once.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "files": {
+                            "type": "array",
+                            "description": "Array of files to analyze in parallel",
+                            "items": {
+                                "type": "object",
+                                "properties": {
+                                    "file_path": {
+                                        "type": "string",
+                                        "description": "The path to the file to analyze"
+                                    },
+                                    "analysis_focus": {
+                                        "type": "string",
+                                        "description": "Focus area for this file",
+                                        "default": "general"
+                                    }
                                 },
-                                "analysis_focus": {
-                                    "type": "string",
-                                    "description": "Focus area for this file",
-                                    "default": "general"
-                                }
-                            },
-                            "required": ["file_path"]
+                                "required": ["file_path"]
+                            }
                         }
-                    }
-                },
-                "required": ["files"]
+                    },
+                    "required": ["files"]
+                }
             }
         }
         
         # Utility: ask a focused question about a specific file (chat)
         self.query_file_function = {
-            "name": "query_file",
-            "description": "Answer a specific question about a file by reading its content and returning a concise, source-grounded answer.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "file_path": {
-                        "type": "string",
-                        "description": "Path to the file, relative to the repository root."
+            "type": "function",
+            "function": {
+                "name": "query_file",
+                "description": "Answer a specific question about a file by reading its content and returning a concise, source-grounded answer.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "file_path": {
+                            "type": "string",
+                            "description": "Path to the file, relative to the repository root."
+                        },
+                        "question": {
+                            "type": "string",
+                            "description": "The user's question to answer about this file."
+                        }
                     },
-                    "question": {
-                        "type": "string",
-                        "description": "The user's question to answer about this file."
-                    }
-                },
-                "required": ["file_path", "question"]
+                    "required": ["file_path", "question"]
+                }
             }
         }
+        
+        # Utility: search and query the indexed codebase
+        self.query_codebase_function = {
+            "type": "function",
+            "function": {
+                "name": "query_codebase",
+                "description": "Search the indexed codebase and answer questions using semantic search. Use this when you need to find code patterns, implementations, or understand how something works across multiple files.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "question": {
+                            "type": "string",
+                            "description": "The question to answer or pattern to search for in the codebase"
+                        },
+                        "collection_name": {
+                            "type": "string",
+                            "description": "Optional: Name of the Qdrant collection to search (defaults to 'codebase')",
+                            "default": "codebase"
+                        },
+                        "search_limit": {
+                            "type": "integer",
+                            "description": "Number of search results to consider (default: 10)",
+                            "default": 10
+                        }
+                    },
+                    "required": ["question"]
+                }
+            }
+        }
+        
         
         # Function handlers - will be set by the analysis engine
         self.function_handlers = {}
@@ -108,16 +149,22 @@ class OrchestratorAgent(BaseAgent):
             return self.custom_system_prompt
         
         if self.mode == "chat":
-            return self._get_chat_system_prompt()
+            prompt = self._get_chat_system_prompt()
+            if prompt is None:
+                logger.error("_get_chat_system_prompt returned None!")
+            return prompt
         else:
-            return self._get_analysis_system_prompt()
+            prompt = self._get_analysis_system_prompt()
+            if prompt is None:
+                logger.error("_get_analysis_system_prompt returned None!")
+            return prompt
     
     def _get_analysis_system_prompt(self) -> str:
         """Default system prompt for analysis mode"""
-        return """You are the main orchestrator for a comprehensive code analysis system. Your role is to strategically select which files to analyze and coordinate the analysis process.
+        prompt = """You are the main orchestrator for a comprehensive code analysis system. Your role is to strategically select which files to analyze and coordinate the analysis process.
 
 CRITICAL: Your workflow MUST be:
-1. Use the analyze_file or analyze_files_batch tools through the system's tool-calling mechanism (NOT by writing Python code)
+1. Use the tools through the system's tool-calling mechanism (NOT by writing Python code)
 2. Wait for and process the tool results
 3. Only then return {"issues": [...]} with compiled findings
 
@@ -175,7 +222,15 @@ When issues are found, they must be categorized using ONLY these categories:
 
 IMPORTANT: You MUST use the provided tools to analyze files. DO NOT return file lists in your response.
 - Use analyze_file or analyze_files_batch tools to request file analysis (through the tool-calling interface, NOT Python code)
-- Only after receiving analysis results, compile and return issues in the structured format
+- Use query_file to answer specific questions about files"""
+
+        # Add query_codebase if available
+        if self.has_indexed_codebase:
+            prompt += "\n- Use query_codebase to search and answer questions across the entire indexed codebase"
+        
+        prompt += "\n- Only after receiving analysis results, compile and return issues in the structured format"
+        
+        return prompt + """
 
 If no files need to be analyzed or you've completed analysis, return an empty issues list:
 {"issues": []}
@@ -189,7 +244,7 @@ Example of INCORRECT behavior:
     
     def _get_chat_system_prompt(self) -> str:
         """System prompt for chat mode"""
-        return """You are a helpful AI assistant specialized in understanding and answering questions about codebases. Your role is to analyze code files and provide comprehensive answers to user questions.
+        prompt = """You are a helpful AI assistant specialized in understanding and answering questions about codebases. Your role is to analyze code files and provide comprehensive answers to user questions.
 
 Your capabilities:
 1. **Code Analysis**: Analyze files to understand their structure, functionality, and purpose
@@ -206,6 +261,13 @@ When a user asks a question:
 IMPORTANT: You have access to the following tools/functions:
 - analyze_file: To analyze a specific file
 - analyze_files_batch: To analyze multiple files in parallel
+- query_file: To answer specific questions about a file (like "how many functions does this file have?" or "do these functions have tests?")"""
+        
+        # Add query_codebase to prompt if available
+        if self.has_indexed_codebase:
+            prompt += "\n- query_codebase: To search the indexed codebase and answer questions using semantic search"
+        
+        prompt += """
 
 To use these tools, you MUST use the tool-calling mechanism provided by the system. DO NOT write Python code or function calls like self.analyze_file(). Instead, the system will automatically detect when you want to use a tool based on your response format.
 
@@ -218,6 +280,8 @@ When you need to analyze a file:
 The system will handle the actual function execution and provide you with the results.
 
 After analyzing relevant files, provide a comprehensive answer that directly addresses the user's question. Include specific details from the analyzed code when relevant."""
+        
+        return prompt
 
     @property
     def agent_name(self) -> str:
@@ -294,24 +358,24 @@ After analyzing relevant files, provide a comprehensive answer that directly add
                 # Log available functions
                 logger.info(f"Available functions for orchestrator: {list(self.function_handlers.keys())}")
                 
-                # Add explicit instruction about using functions
-                if self.mode == "chat":
-                    function_prompt = (
-                        prompt
-                        + "\n\nIMPORTANT: You have access to these functions:\n"
-                        + "1. query_file(file_path, question) - answer a focused question about a single file (preferred)\n"
-                        + "2. analyze_file(file_path, analysis_focus) - deep code-quality analysis when necessary\n"
-                        + "3. analyze_files_batch(files) - analyze multiple files in parallel if needed\n\n"
-                        + "Strategy: Prefer query_file on the most relevant file to directly answer the user's question with citations. Use read_file for quick context and analyze_file only when a deeper quality review is needed. Return the structured response and set analysis_complete=true when ready to answer."
-                    )
+                # Build function prompt based on available features
+                function_prompt = prompt + "\n\nIMPORTANT: You have access to these functions:\n"
+                function_prompt += "1. query_file(file_path, question) - answer a focused question about a single file\n"
+                
+                if self.has_indexed_codebase:
+                    function_prompt += "2. query_codebase(question) - search the indexed codebase to find patterns and answer cross-file questions\n"
+                    function_prompt += "3. analyze_file(file_path, analysis_focus) - deep code-quality analysis when necessary\n"
+                    function_prompt += "4. analyze_files_batch(files) - analyze multiple files in parallel if needed\n\n"
+                    function_prompt += "Strategy: Use query_file for specific file questions, query_codebase for cross-file searches.\n"
                 else:
-                    function_prompt = (
-                        prompt
-                        + "\n\nIMPORTANT: You have access to these functions:\n"
-                        + "1. analyze_file(file_path, analysis_focus) - for single file\n"
-                        + "2. analyze_files_batch(files) - for multiple files\n\n"
-                        + "Use these functions to analyze files. Do NOT return file lists in your response. Only return {\"issues\": [...]} after analysis."
-                    )
+                    function_prompt += "2. analyze_file(file_path, analysis_focus) - deep code-quality analysis when necessary\n"
+                    function_prompt += "3. analyze_files_batch(files) - analyze multiple files in parallel if needed\n\n"
+                    function_prompt += "Strategy: Use query_file to answer specific questions about files.\n"
+                
+                if self.mode == "chat":
+                    function_prompt += "Return the structured response with 'answer', 'files_to_analyze', and 'analysis_complete' fields when ready."
+                else:
+                    function_prompt += "Return the structured response with the 'issues' field (required) containing the list of code quality issues found."
                 
                 # Log handlers right before passing them
                 logger.info(f"Passing function handlers to generate_structured_response_with_functions: {list(self.function_handlers.keys())}")
@@ -321,15 +385,22 @@ After analyzing relevant files, provide a comprehensive answer that directly add
                 # Choose the appropriate schema based on mode
                 response_schema = ChatResponseSchema if self.mode == "chat" else AnalysisResponseSchema
                 
+                # Build function declarations based on available features
+                function_declarations = [
+                    self.query_file_function,
+                    self.analyze_file_function,
+                    self.analyze_files_batch_function,
+                ]
+                
+                # Only include query_codebase if codebase is indexed
+                if self.has_indexed_codebase:
+                    function_declarations.insert(1, self.query_codebase_function)
+                
                 # Generate response with function calling
                 response = await self.generate_structured_response_with_functions(
                     prompt=function_prompt,
                     response_schema=response_schema,
-                    function_declarations=[
-                        self.query_file_function,
-                        self.analyze_file_function,
-                        self.analyze_files_batch_function,
-                    ],
+                    function_declarations=function_declarations,
                     function_handlers=self.function_handlers,
                     context={
                         'iteration': self.current_iteration,
@@ -440,7 +511,11 @@ REMEMBER: You must use the provided tools (analyze_file or analyze_files_batch) 
 
 Example function calls:
 - analyze_file(file_path="src/main.py", analysis_focus="entry point and security")
-- analyze_files_batch(files=[{{"file_path": "src/config.py"}}, {{"file_path": "src/utils.py"}}, {{"file_path": "requirements.txt"}}])"""
+- analyze_files_batch(files=[{{"file_path": "src/config.py"}}, {{"file_path": "src/utils.py"}}, {{"file_path": "requirements.txt"}}])
+
+After analyzing files, you will provide a structured response with:
+- issues: List of code quality issues found (required field, can be empty list [])
+- summary: Optional summary dictionary (leave as null/None, do not provide as string)"""
         
         return prompt
     
@@ -465,13 +540,13 @@ Continue analyzing important files that haven't been analyzed yet. Focus on:
 - Any remaining large or complex files
 - Files that might contain security or performance issues
 
-If you believe you have sufficient coverage of the important files, return your findings as:
-{{"issues": [... any issues found ...]}}
+When you're ready to provide your analysis results, make sure to:
+- Include the 'issues' field (required) with a list of any code quality issues found
+- Each issue should include: category, severity, file_path, line_number, description, and suggestion
+- If no issues were found, set issues to an empty list: []
+- Do NOT include a summary field (or set it to null)
 
-If no issues were found, return:
-{{"issues": []}}
-
-REMEMBER: Use function calls to analyze files, do NOT return file lists directly."""
+REMEMBER: Use function calls to analyze files, then provide the structured response with the issues field."""
         
         return prompt
     

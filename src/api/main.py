@@ -13,7 +13,7 @@ from datetime import datetime
 from ..analyzers.analyzer import AnalysisResult
 from ..core.analysis_engine import AnalysisEngine
 from ..core.orchestrator_engine import OrchestratorEngine
-from ..core.config import Config
+from ..core.config import settings
 from .models import (
     AnalysisRequest, 
     GitHubAnalysisRequest,
@@ -21,9 +21,16 @@ from .models import (
     CodebaseQuestion,
     QuestionResponse,
     ChatRequest,
-    ChatResponse
+    ChatResponse,
+    CodebaseIndexRequest,
+    CodebaseIndexResponse,
+    CodebaseSearchRequest,
+    CodebaseSearchResponse,
+    CodeSearchResult
 )
-
+from ..codebase_indexer import MultiLanguageCodebaseParser, QdrantCodebaseIndexer
+from ..core.config import settings
+from ..utils import FileFilter
 
 app = FastAPI(
     title="codet API",
@@ -391,3 +398,158 @@ async def chat_with_codebase(request: ChatRequest):
 async def health_check():
     """Health check endpoint"""
     return {"status": "healthy", "timestamp": datetime.now().isoformat()}
+
+
+# Global indexer instance (in production, consider using dependency injection)
+_indexer_instance: Optional[QdrantCodebaseIndexer] = None
+
+
+def get_indexer(collection_name: str = "codebase") -> QdrantCodebaseIndexer:
+    """Get or create indexer instance"""
+    global _indexer_instance
+    if _indexer_instance is None or _indexer_instance.collection_name != collection_name:
+        _indexer_instance = QdrantCodebaseIndexer(
+            collection_name=collection_name,
+            qdrant_url=settings.qdrant_url,
+            qdrant_api_key=settings.qdrant_api_key,
+            use_memory=settings.use_memory
+        )
+    return _indexer_instance
+
+
+@app.post("/api/index", response_model=CodebaseIndexResponse)
+async def index_codebase(
+    request: CodebaseIndexRequest,
+    background_tasks: BackgroundTasks
+):
+    """
+    Index a codebase into Qdrant for semantic search
+    
+    This endpoint parses code files in the specified path and creates embeddings
+    for functions, classes, methods, and other code constructs.
+    
+    Supported languages:
+    - Python (.py)
+    - JavaScript (.js, .jsx, .mjs)
+    - TypeScript (.ts, .tsx)
+    """
+    path = Path(request.path)
+    
+    if not path.exists():
+        raise HTTPException(status_code=404, detail=f"Path not found: {path}")
+    
+    # Parse codebase with file filtering support
+    file_filter = FileFilter.from_path(path)
+    parser = MultiLanguageCodebaseParser(file_filter=file_filter)
+    
+    if path.is_file():
+        chunks = parser.parse_file(str(path))
+    else:
+        chunks = parser.parse_directory(str(path))
+    
+    if not chunks:
+        raise HTTPException(status_code=400, detail="No supported files found to index (Python, JavaScript, TypeScript)")
+    
+    # Index chunks
+    indexer = get_indexer(request.collection_name)
+    
+    # Run indexing in background for large codebases
+    def index_task():
+        indexer.index_chunks(chunks, batch_size=request.batch_size)
+    
+    if len(chunks) > 1000:  # Large codebase, run in background
+        background_tasks.add_task(index_task)
+        status = "indexing_started"
+    else:
+        index_task()
+        status = "completed"
+    
+    # Get statistics
+    stats = indexer.get_statistics()
+    
+    return CodebaseIndexResponse(
+        status=status,
+        total_chunks=len(chunks),
+        type_counts=stats['type_counts'],
+        collection_name=request.collection_name,
+        timestamp=datetime.now().isoformat()
+    )
+
+
+@app.post("/api/search", response_model=CodebaseSearchResponse)
+async def search_codebase(request: CodebaseSearchRequest):
+    """
+    Search indexed codebase using semantic search
+    
+    Supports three search modes:
+    - nlp: Natural language search using sentence transformers
+    - code: Code-to-code similarity search using code embeddings
+    - hybrid: Combines both NLP and code search for best results
+    """
+    indexer = get_indexer(request.collection_name)
+    
+    # Check if collection exists
+    try:
+        stats = indexer.get_statistics()
+        if stats['total_chunks'] == 0:
+            raise HTTPException(status_code=400, detail="No indexed chunks found. Please index codebase first.")
+    except Exception:
+        raise HTTPException(status_code=404, detail=f"Collection '{request.collection_name}' not found")
+    
+    # Perform search
+    if request.search_type == "nlp":
+        results = indexer.search_nlp(request.query, limit=request.limit, filter_dict=request.filter)
+    elif request.search_type == "code":
+        results = indexer.search_code(request.query, limit=request.limit, filter_dict=request.filter)
+    else:  # hybrid
+        hybrid_results = indexer.hybrid_search(
+            request.query, 
+            nlp_limit=request.limit // 2, 
+            code_limit=request.limit
+        )
+        results = hybrid_results['merged'][:request.limit]
+    
+    # Convert to response format
+    search_results = []
+    for result in results:
+        # Create code preview
+        code_lines = result['code'].split('\n')[:5]
+        if len(code_lines) < len(result['code'].split('\n')):
+            code_lines.append("...")
+        code_preview = '\n'.join(code_lines)
+        
+        search_results.append(CodeSearchResult(
+            name=result['name'],
+            signature=result['signature'],
+            code_type=result['code_type'],
+            file_path=result['context']['file_path'],
+            line_from=result['line_from'],
+            line_to=result['line_to'],
+            score=result.get('score', result.get('nlp_score', 0)),
+            docstring=result.get('docstring'),
+            code_preview=code_preview
+        ))
+    
+    return CodebaseSearchResponse(
+        query=request.query,
+        results=search_results,
+        total_results=len(search_results),
+        search_type=request.search_type,
+        timestamp=datetime.now().isoformat()
+    )
+
+
+@app.get("/api/index/stats/{collection_name}")
+async def get_index_statistics(collection_name: str = "codebase"):
+    """Get statistics about an indexed collection"""
+    try:
+        indexer = get_indexer(collection_name)
+        stats = indexer.get_statistics()
+        
+        return {
+            "collection_name": collection_name,
+            "statistics": stats,
+            "timestamp": datetime.now().isoformat()
+        }
+    except Exception as e:
+        raise HTTPException(status_code=404, detail=f"Collection '{collection_name}' not found or error: {str(e)}")

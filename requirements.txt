@@ -2,12 +2,17 @@
 fastapi>=0.104.0
 uvicorn>=0.24.0
 pydantic>=2.0.0
+pydantic-settings>=2.0.0
 python-multipart>=0.0.6
 aiofiles>=23.0.0
+httpx>=0.25.0
 
 # Code analysis
 pygments>=2.16.0
 tree-sitter>=0.20.0
+tree-sitter-python>=0.20.0
+tree-sitter-javascript>=0.20.0
+tree-sitter-typescript>=0.20.0
 radon>=6.0.0
 bandit>=1.7.0
 pylint>=3.0.0
@@ -35,6 +40,11 @@ langchain>=0.1.0
 langchain-google-genai>=1.0.0
 langchain-core>=0.1.0
 langchain-ollama>=0.1.0
+
+# Vector database and embeddings
+qdrant-client>=1.7.0
+sentence-transformers>=2.2.0
+transformers>=4.36.0
 
 # Utilities
 pyyaml>=6.0

@@ -17,6 +17,28 @@ if ! command -v node &> /dev/null; then
     exit 1
 fi
 
+# Check if Docker is installed and running
+if command -v docker &> /dev/null; then
+    # Start Redis if not running
+    if ! docker ps | grep -q codet-redis; then
+        echo "🔴 Starting Redis..."
+        docker-compose -f docker-compose.redis.yml up -d
+    else
+        echo "✅ Redis already running"
+    fi
+    
+    # Start Qdrant if not running
+    if ! docker ps | grep -q codet-qdrant; then
+        echo "🔍 Starting Qdrant..."
+        docker-compose -f docker-compose.qdrant.yml up -d
+    else
+        echo "✅ Qdrant already running"
+    fi
+else
+    echo "⚠️  Docker not found. Redis and Qdrant will not be started."
+    echo "   For caching and indexing features, please install Docker."
+fi
+
 # Start backend in background
 echo "🔧 Starting backend server..."
 cd /home/abhay/code/codet
