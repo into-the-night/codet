@@ -1,0 +1,105 @@
+version: '3.8'
+
+services:
+  # Redis for caching and message history
+  redis:
+    image: redis:7-alpine
+    container_name: codet-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    command: redis-server --appendonly yes --maxmemory 256mb --maxmemory-policy allkeys-lru
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+    networks:
+      - codet-network
+
+  # Redis Commander for monitoring
+  redis-commander:
+    image: rediscommander/redis-commander:latest
+    container_name: codet-redis-commander
+    ports:
+      - "8081:8081"
+    environment:
+      - REDIS_HOSTS=local:redis:6379
+    depends_on:
+      - redis
+    restart: unless-stopped
+    networks:
+      - codet-network
+
+  # Qdrant for vector search
+  qdrant:
+    image: qdrant/qdrant:latest
+    container_name: codet-qdrant
+    ports:
+      - "6333:6333"
+      - "6334:6334"  # GRPC port
+    volumes:
+      - qdrant_storage:/qdrant/storage
+    environment:
+      - QDRANT__LOG_LEVEL=INFO
+      - QDRANT__SERVICE__HTTP_PORT=6333
+      - QDRANT__SERVICE__GRPC_PORT=6334
+    restart: unless-stopped
+    networks:
+      - codet-network
+
+  # Codet API
+  api:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    container_name: codet-api
+    ports:
+      - "8000:8000"
+    environment:
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - QDRANT_HOST=qdrant
+      - QDRANT_PORT=6333
+      - API_HOST=0.0.0.0
+      - API_PORT=8000
+    env_file:
+      - .env
+    volumes:
+      - ./src:/app/src
+      - ./config:/app/config
+    depends_on:
+      - redis
+      - qdrant
+    restart: unless-stopped
+    networks:
+      - codet-network
+    command: uvicorn src.api.main:app --host 0.0.0.0 --port 8000 --reload
+
+  # Optional: Frontend (uncomment to run frontend in Docker)
+  # frontend:
+  #   build:
+  #     context: ../frontend
+  #     dockerfile: ../docker/frontend.Dockerfile
+  #   container_name: codet-frontend
+  #   ports:
+  #     - "3000:3000"
+  #   environment:
+  #     - REACT_APP_API_URL=http://localhost:8000
+  #   depends_on:
+  #     - api
+  #   restart: unless-stopped
+  #   networks:
+  #     - codet-network
+
+volumes:
+  redis_data:
+    driver: local
+  qdrant_storage:
+    driver: local
+
+networks:
+  codet-network:
+    driver: bridge
