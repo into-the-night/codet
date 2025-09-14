@@ -29,6 +29,7 @@ class OrchestratorAgent(BaseAgent):
         self.custom_system_prompt = custom_system_prompt  # Allow custom prompts
         self.user_question = None  # Store user question for chat mode
         self.chat_answer = None  # Store final answer for chat mode
+        self._cached_analysis_result = None  # Store cached analysis for chat mode
         
         self.analyze_file_function = {
             "type": "function",
@@ -650,6 +651,10 @@ REMEMBER: Use function calls to analyze files, then provide the structured respo
         
         return code_issues
     
+    def set_cached_analysis(self, analysis_result):
+        """Set cached analysis result for use in chat mode"""
+        self._cached_analysis_result = analysis_result
+    
     def _build_chat_prompt(self, question: str, tree_data: Dict[str, Any], root_path: Path) -> str:
         """Build the initial prompt for chat mode"""
         stats = tree_data['statistics']
@@ -670,7 +675,43 @@ REPOSITORY STRUCTURE:
 {json.dumps(tree_data['tree'], indent=2)[:2000]}...
 
 AVAILABLE FILES:
-{self._format_file_list(all_files[:50])}  # Show first 50 files
+{self._format_file_list(all_files[:50])}  # Show first 50 files"""
+
+        # Include existing analysis results if available
+        if self._cached_analysis_result:
+            prompt += f"""
+
+EXISTING CODEBASE ANALYSIS:
+A previous analysis of this codebase has been performed with the following findings:
+
+Quality Score: {self._cached_analysis_result.summary.get('quality_score', 'N/A')}
+Total Issues Found: {len(self._cached_analysis_result.issues)}
+Files Analyzed: {self._cached_analysis_result.summary.get('files_analyzed', 0)}
+
+Issue Categories:"""
+            
+            # Group issues by category
+            issues_by_category = {}
+            for issue in self._cached_analysis_result.issues:
+                category = issue.category.value
+                if category not in issues_by_category:
+                    issues_by_category[category] = []
+                issues_by_category[category].append(issue)
+            
+            for category, issues in issues_by_category.items():
+                prompt += f"\n- {category}: {len(issues)} issues"
+            
+            # Include top issues
+            if self._cached_analysis_result.issues:
+                prompt += "\n\nTop Issues from Previous Analysis:"
+                for i, issue in enumerate(self._cached_analysis_result.issues[:5], 1):
+                    prompt += f"\n{i}. [{issue.severity.value}] {issue.title} in {issue.file_path}"
+                    if issue.description:
+                        prompt += f"\n   {issue.description[:100]}..."
+            
+            prompt += "\n\nThis existing analysis can provide context for answering the user's question.\n"
+
+        prompt += """
 
 To answer this question effectively, analyze the most relevant files in the repository. 
 Focus on files that are:

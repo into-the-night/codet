@@ -10,7 +10,7 @@ from qdrant_client.models import (
     Filter, FieldCondition, MatchValue
 )
 from ..agents.schemas import CodeChunk
-import numpy as np
+import time
 
 
 class QdrantCodebaseIndexer:
@@ -59,8 +59,22 @@ class QdrantCodebaseIndexer:
         """Create Qdrant collection with multiple vectors"""
         try:
             collections = self.client.get_collections().collections
-            print(f"Collections: {collections}")
-            if not any(col.name == self.collection_name for col in collections):
+            collection_exists = any(col.name == self.collection_name for col in collections)
+            
+            if collection_exists:
+                print(f"Collection '{self.collection_name}' already exists")
+                # Check if the existing collection has the correct vector configuration
+                try:
+                    self.client.get_collection(self.collection_name)
+                    # If we can get the collection info, it's valid, so we'll use it
+                    print(f"Using existing collection '{self.collection_name}'")
+                except Exception:
+                    # If we can't get collection info, try to recreate it
+                    print(f"Existing collection '{self.collection_name}' appears corrupted, recreating...")
+                    self.client.delete_collection(self.collection_name)
+                    collection_exists = False
+            
+            if not collection_exists:
                 # Create collection with multiple named vectors
                 self.client.create_collection(
                     collection_name=self.collection_name,
@@ -70,8 +84,6 @@ class QdrantCodebaseIndexer:
                     }
                 )
                 print(f"Created collection '{self.collection_name}'")
-            else:
-                print(f"Collection '{self.collection_name}' already exists")
         except Exception as e:
             print(f"Error creating collection: {e}")
     

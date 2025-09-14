@@ -1,4 +1,4 @@
-"""Command-line interface for Code Quality Intelligence Agent"""
+"""Command-line interface for Codet"""
 
 import click
 from pathlib import Path
@@ -19,7 +19,7 @@ from .core.config import settings
 from .core.analysis_engine import AnalysisEngine
 from .core.orchestrator_engine import OrchestratorEngine
 from .codebase_indexer import MultiLanguageCodebaseParser, QdrantCodebaseIndexer
-from .utils import FileFilter
+from .utils import FileFilter, RepoSizeChecker
 
 
 console = Console()
@@ -100,16 +100,22 @@ def analyze(path, output, format, config, use_local, ollama_model, index, collec
     Uses an intelligent orchestrator that strategically selects files to analyze
     and coordinates the analysis process for comprehensive coverage.
     
-    With the --index flag, the codebase will be indexed into Qdrant for RAG
-    (Retrieval-Augmented Generation) before analysis, enabling semantic search
-    capabilities for more context-aware analysis.
+    Large repositories are automatically indexed into Qdrant for RAG
+    (Retrieval-Augmented Generation) to enable semantic search capabilities
+    for more context-aware analysis. Use --index to force indexing for smaller repos.
     """                                                                                                                                                                                                                     
     path = Path(path)
-    # Use config values if CLI parameters not provided
-    if index:
-        qdrant_url = qdrant_url or settings.qdrant_url
-        qdrant_api_key = qdrant_api_key or settings.qdrant_api_key
     
+    # Check if repository needs indexing
+    size_checker = RepoSizeChecker(
+        file_count_threshold=settings.repo_file_count_threshold,
+        total_size_threshold=settings.repo_total_size_threshold,
+        single_file_threshold=settings.repo_single_file_threshold
+    )
+    
+    size_check = size_checker.check_repository(path)
+    needs_indexing = size_check['needs_indexing'] or index  # Force index if flag is set
+
     # Show initial info
     if use_local:
         llm_mode = "Local (Ollama)"
@@ -124,8 +130,17 @@ def analyze(path, output, format, config, use_local, ollama_model, index, collec
         f"[bold cyan]🤖 LLM Mode:[/bold cyan] {llm_mode} ({llm_model})"
     )
     
-    if index:
-        collection = collection or path.name
+    if needs_indexing:
+        qdrant_url = qdrant_url or settings.qdrant_url
+        qdrant_api_key = qdrant_api_key or settings.qdrant_api_key
+        # Sanitize collection name - use directory name or default
+        if not collection:
+            if path == Path('.'):
+                collection = Path.cwd().name  # Use current directory name
+            else:
+                collection = path
+        # Replace any invalid characters
+        collection = collection.replace('.', '_').replace('/', '_').replace('\\', '_')
         info_text += f"\n[bold cyan]🔍 RAG Mode:[/bold cyan] Enabled (Collection: {collection})"
     
     console.print(Panel.fit(
@@ -158,7 +173,7 @@ def analyze(path, output, format, config, use_local, ollama_model, index, collec
             raise click.Abort()
     
     # Index codebase if requested
-    if index:
+    if index or needs_indexing:
         console.print("[bold cyan]🔍 Indexing codebase for RAG...[/bold cyan]")
         with Progress(
             SpinnerColumn(style="cyan"),
@@ -182,7 +197,7 @@ def analyze(path, output, format, config, use_local, ollama_model, index, collec
             console.print(f"[green]✅ Found {len(chunks)} code chunks[/green]")
             
             if chunks:
-                # Initialize indexer  
+                # Initialize indexer
                 task = progress.add_task("🚀 Initializing Qdrant indexer...", total=None)
                 indexer = QdrantCodebaseIndexer(
                     collection_name=collection,
@@ -339,7 +354,7 @@ def _display_console_report(result):
     """Display analysis results in console with enhanced formatting"""
     console.print()
     console.print(Panel(
-        f"[bold cyan]📊 Code Quality Analysis Report[/bold cyan]\n\n"
+        f"[bold cyan]📊 Codet Report[/bold cyan]\n\n"
         f"📁 Project: [bold]{result.project_path}[/bold]\n"
         f"📄 Analyzed: [bold]{result.summary['files_analyzed']}[/bold] files\n"
         f"🏆 Quality Score: [bold cyan]{result.summary['quality_score']:.1f}/100[/bold cyan]",
@@ -485,10 +500,15 @@ def chat(path, config, use_local, ollama_model, index, collection, qdrant_url, q
         console.print(f"[red]❌ Error: Path '{path}' does not exist![/red]")
         return
     
-    # Use config values if CLI parameters not provided
-    if index:
-        qdrant_url = qdrant_url or settings.qdrant_url
-        qdrant_api_key = qdrant_api_key or settings.qdrant_api_key
+    # Check if repository needs indexing
+    size_checker = RepoSizeChecker(
+        file_count_threshold=settings.repo_file_count_threshold,
+        total_size_threshold=settings.repo_total_size_threshold,
+        single_file_threshold=settings.repo_single_file_threshold
+    )
+    
+    size_check = size_checker.check_repository(path)
+    needs_indexing = size_check['needs_indexing'] or index  # Force index if flag is set
     
     # Show chat interface
     console.print()
@@ -498,8 +518,13 @@ def chat(path, config, use_local, ollama_model, index, collection, qdrant_url, q
         f"🤖 LLM Mode: [bold]{'Local (Ollama)' if use_local else 'Cloud (Gemini)'}[/bold]"
     )
     
-    if index:
+    if needs_indexing:
+        qdrant_url = qdrant_url or settings.qdrant_url
+        qdrant_api_key = qdrant_api_key or settings.qdrant_api_key
+        collection = collection or path
         info_text += f"\n🔍 RAG Mode: [bold]Enabled (Collection: {collection})[/bold]"
+    else:
+        info_text += f"\n🔍 RAG Mode: [bold]Disabled[/bold]"
     
     info_text += "\n\n[dim]Type 'exit' or 'quit' to end the conversation[/dim]"
     
@@ -581,6 +606,7 @@ def chat(path, config, use_local, ollama_model, index, collection, qdrant_url, q
             else:
                 console.print("[yellow]⚠️  No supported files found to index[/yellow]\n")
     
+
     # Initialize chat engine
     with Progress(
         SpinnerColumn(style="cyan"),
@@ -590,13 +616,14 @@ def chat(path, config, use_local, ollama_model, index, collection, qdrant_url, q
     ) as progress:
         task = progress.add_task("🚀 Initializing chat engine...", total=100)
         
-        collection = collection or path.name
+        collection = collection or path
         
         chat_engine = OrchestratorEngine(
             mode="chat",
             has_indexed_codebase=index,
             collection_name=collection
         )
+
         progress.update(task, advance=50)
         
         # Create temporary config with LLM settings if needed

@@ -1,41 +1,96 @@
-"""FastAPI application for Code Quality Intelligence Agent"""
+"""FastAPI application for Codet"""
 
-from fastapi import FastAPI, UploadFile, File, HTTPException, BackgroundTasks
+from fastapi import FastAPI, UploadFile, File, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse, FileResponse
 from pathlib import Path
-from typing import List, Optional, Dict, Any
+from typing import List, Optional
 import tempfile
 import shutil
 import uuid
+import asyncio
+import logging
 from datetime import datetime
+from contextlib import asynccontextmanager
+import glob
+import os
 
 from ..analyzers.analyzer import AnalysisResult
 from ..core.analysis_engine import AnalysisEngine
 from ..core.orchestrator_engine import OrchestratorEngine
-from ..core.config import settings
+from ..core.config import settings, RedisConfig
+from ..core.redis_client import get_redis_client, close_redis_client
 from .models import (
     AnalysisRequest, 
     GitHubAnalysisRequest,
     AnalysisResponse, 
     CodebaseQuestion,
-    QuestionResponse,
-    ChatRequest,
-    ChatResponse,
-    CodebaseIndexRequest,
-    CodebaseIndexResponse,
-    CodebaseSearchRequest,
-    CodebaseSearchResponse,
-    CodeSearchResult
 )
 from ..codebase_indexer import MultiLanguageCodebaseParser, QdrantCodebaseIndexer
-from ..core.config import settings
-from ..utils import FileFilter
+from ..utils import check_repository_size
+import pickle
+import base64
+
+# Initialize logger
+logger = logging.getLogger(__name__)
+
+# Redis client for caching analysis results
+redis_client = None
+parser = MultiLanguageCodebaseParser()
+
+# Track temporary directories for cleanup
+temp_directories = set()
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Startup
+    global redis_client
+    redis_config = RedisConfig(settings)
+    redis_client = await get_redis_client(redis_config)
+    logger.info("Redis client initialized")
+    
+    yield
+    
+    # Shutdown
+    # Clean up tracked temporary directories
+    global temp_directories
+    logger.info(f"Cleaning up {len(temp_directories)} temporary directories")
+    
+    for temp_dir in temp_directories:
+        if os.path.exists(temp_dir):
+            try:
+                shutil.rmtree(temp_dir)
+                logger.info(f"Cleaned up temporary directory: {temp_dir}")
+            except Exception as e:
+                logger.warning(f"Failed to clean up {temp_dir}: {e}")
+    
+    # Also clean up any orphaned temp directories
+    try:
+        temp_patterns = [
+            "/tmp/tmp*",  # Default tempfile pattern
+            "/tmp/codet_github_*",  # GitHub clone pattern
+        ]
+        
+        for pattern in temp_patterns:
+            temp_dirs = glob.glob(pattern)
+            for temp_dir in temp_dirs:
+                if os.path.isdir(temp_dir) and temp_dir not in temp_directories:
+                    try:
+                        shutil.rmtree(temp_dir)
+                        logger.info(f"Cleaned up orphaned temporary directory: {temp_dir}")
+                    except Exception as e:
+                        logger.warning(f"Failed to clean up orphaned {temp_dir}: {e}")
+    except Exception as e:
+        logger.error(f"Error during orphaned temp file cleanup: {e}")
+    
+    # Close Redis connection
+    await close_redis_client()
+    logger.info("Redis client closed")
 
 app = FastAPI(
     title="codet API",
     description="Analyze code quality and answer questions about your codebase",
-    version="0.1.0"
+    version="0.1.0",
+    lifespan=lifespan
 )
 
 # Enable CORS for frontend
@@ -47,9 +102,14 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Storage for analysis results (in production, use a database)
-analysis_cache: Dict[str, AnalysisResult] = {}
+# Analysis result serialization functions
+def serialize_analysis_result(result: AnalysisResult) -> str:
+    """Serialize AnalysisResult to string for Redis storage"""
+    return base64.b64encode(pickle.dumps(result)).decode('utf-8')
 
+def deserialize_analysis_result(data: str) -> AnalysisResult:
+    """Deserialize AnalysisResult from Redis storage"""
+    return pickle.loads(base64.b64decode(data.encode('utf-8')))
 
 @app.get("/")
 async def root():
@@ -69,7 +129,7 @@ async def root():
 
 
 @app.post("/api/analyze", response_model=AnalysisResponse)
-async def analyze_repository(request: AnalysisRequest, background_tasks: BackgroundTasks):
+async def analyze_repository(request: AnalysisRequest):
     """Analyze a local repository or directory"""
     try:
         path = Path(request.path)
@@ -91,8 +151,11 @@ async def analyze_repository(request: AnalysisRequest, background_tasks: Backgro
         # Run async analysis
         result = await engine.analyze_repository(path)
         
-        # Cache the result
-        analysis_cache[analysis_id] = result
+        # Cache the result in Redis
+        if redis_client:
+            await redis_client.set_cache(f"analysis:{analysis_id}", serialize_analysis_result(result), ttl=3600)  # 1 hour TTL
+        else:
+            logger.warning("Redis client not available, skipping cache")
         
         # Count AI-detected issues
         ai_issues_count = len([i for i in result.issues if i.metadata and i.metadata.get('ai_detected')])
@@ -120,10 +183,11 @@ async def analyze_repository(request: AnalysisRequest, background_tasks: Backgro
 
 @app.post("/api/upload")
 async def upload_files(files: List[UploadFile] = File(...)):
-    """Upload files for analysis"""
+    """Upload files for analysis with auto-indexing for large codebases"""
     try:
         # Create temporary directory
         temp_dir = Path(tempfile.mkdtemp())
+        temp_directories.add(str(temp_dir))  # Track for cleanup
         
         # Save uploaded files
         for file in files:
@@ -134,21 +198,37 @@ async def upload_files(files: List[UploadFile] = File(...)):
                 content = await file.read()
                 f.write(content)
         
+        # Check repository size to determine if indexing is needed
+        size_check = check_repository_size(str(temp_dir))
+        
+        # Auto-index if the codebase is too large
+        if size_check['needs_indexing']:
+            logger.info(f"Auto-indexing large codebase: {size_check['reason']}")
+            # Index the codebase for better performance
+            chunks = parser.parse_directory(str(temp_dir))
+            indexer = QdrantCodebaseIndexer(
+                collection_name=f"upload_{uuid.uuid4().hex[:8]}",
+                qdrant_url=settings.qdrant_url,
+                qdrant_api_key=settings.qdrant_api_key,
+                use_memory=settings.use_memory
+            )
+            indexer.index_chunks(chunks, batch_size=100)
+            index_result = indexer.get_statistics()
+            logger.info(f"Indexed {index_result['total_chunks']} chunks")
+        
         # Analyze the uploaded files
         request = AnalysisRequest(path=str(temp_dir))
-        response = await analyze_repository(request, BackgroundTasks())
-        
-        # Clean up temp directory (in background)
-        BackgroundTasks().add_task(shutil.rmtree, temp_dir)
+        response = await analyze_repository(request)
         
         return response
         
     except Exception as e:
+        logger.error(f"Upload error: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.post("/api/analyze-github", response_model=AnalysisResponse)
-async def analyze_github_repository(request: GitHubAnalysisRequest, background_tasks: BackgroundTasks):
+async def analyze_github_repository(request: GitHubAnalysisRequest):
     """Clone and analyze a GitHub repository"""
     import subprocess
     import re
@@ -161,6 +241,7 @@ async def analyze_github_repository(request: GitHubAnalysisRequest, background_t
         
         # Create temporary directory for cloning
         temp_dir = Path(tempfile.mkdtemp(prefix="codet_github_"))
+        temp_directories.add(str(temp_dir))  # Track for cleanup
         
         try:
             # Clone the repository
@@ -179,7 +260,24 @@ async def analyze_github_repository(request: GitHubAnalysisRequest, background_t
             
             # Generate unique analysis ID
             analysis_id = str(uuid.uuid4())
-
+            
+            # Check repository size to determine if indexing is needed
+            size_check = check_repository_size(str(temp_dir))
+            
+            # Auto-index if the codebase is too large
+            if size_check['needs_indexing']:
+                logger.info(f"Auto-indexing large codebase: {size_check['reason']}")
+                # Index the codebase for better performance
+                chunks = parser.parse_directory(str(temp_dir))
+                indexer = QdrantCodebaseIndexer(
+                    collection_name=f"upload_{uuid.uuid4().hex[:8]}",
+                    qdrant_url=settings.qdrant_url,
+                    qdrant_api_key=settings.qdrant_api_key,
+                    use_memory=settings.use_memory
+                )
+                indexer.index_chunks(chunks, batch_size=100)
+                index_result = indexer.get_statistics()
+                logger.info(f"Indexed {index_result['total_chunks']} chunks")
             
             if not request.enable_ai:
                 raise HTTPException(status_code=400, detail="AI analysis is required")
@@ -194,9 +292,13 @@ async def analyze_github_repository(request: GitHubAnalysisRequest, background_t
             
             # Update the project path to show the original GitHub URL
             result.project_path = Path(request.github_url)
+            result.summary['temp_dir'] = str(temp_dir)
             
-            # Cache the result
-            analysis_cache[analysis_id] = result
+            # Cache the result in Redis
+            if redis_client:
+                await redis_client.set_cache(f"analysis:{analysis_id}", serialize_analysis_result(result), ttl=3600)  # 1 hour TTL
+            else:
+                logger.warning("Redis client not available, skipping cache")
             
             # Count AI-detected issues
             ai_issues_count = len([i for i in result.issues if i.metadata and i.metadata.get('ai_detected')])
@@ -219,54 +321,60 @@ async def analyze_github_repository(request: GitHubAnalysisRequest, background_t
             # Add GitHub URL to summary
             response_data.summary['github_url'] = request.github_url
             
-            # Schedule cleanup of temp directory
-            background_tasks.add_task(shutil.rmtree, temp_dir)
-            
             return response_data
-            
-        except subprocess.TimeoutExpired:
-            # Clean up on timeout
-            shutil.rmtree(temp_dir, ignore_errors=True)
-            raise HTTPException(status_code=408, detail="Repository clone timed out")
         except Exception as e:
-            # Clean up on error
-            shutil.rmtree(temp_dir, ignore_errors=True)
-            raise e
-            
+            raise HTTPException(status_code=500, detail=str(e))
     except HTTPException:
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.post("/api/ask/{analysis_id}", response_model=QuestionResponse)
+@app.post("/api/ask/{analysis_id}")
 async def ask_question(analysis_id: str, question: CodebaseQuestion):
     """Ask a question about the analyzed codebase"""
     try:
-        if analysis_id not in analysis_cache:
+        # Get cached analysis result from Redis
+        if not redis_client:
+            raise HTTPException(status_code=503, detail="Redis client not available")
+        
+        cached_data = await redis_client.get_cache(f"analysis:{analysis_id}")
+        if not cached_data:
             raise HTTPException(status_code=404, detail="Analysis not found")
         
-        result = analysis_cache[analysis_id]
+        result = deserialize_analysis_result(cached_data)
         
-        # Here you would integrate with an LLM or Q&A system
-        # For now, return a mock response
-        answer = f"Based on the analysis of {result.project_path}, here's what I found regarding '{question.question}'..."
+        # Use the orchestrator engine for AI-powered Q&A
+        chat_engine = OrchestratorEngine(mode="chat")
         
-        # Add some context from the analysis
-        if "security" in question.question.lower():
-            security_issues = [i for i in result.issues if i.category.value == "security"]
-            answer += f"\n\nSecurity Analysis: Found {len(security_issues)} security-related issues."
+        # Pass the cached analysis result to the chat engine
+        chat_engine.set_cached_analysis(result)
         
-        return QuestionResponse(
+        chat_engine.initialize_agents()
+        
+        # Run chat analysis - use defaults if not provided
+        answer = await chat_engine.answer_question(
             question=question.question,
-            answer=answer,
-            context=[],  # Would include relevant code snippets
-            confidence=0.85
+            path=Path(result.summary.get('temp_dir'))
         )
+        
+        # Get list of analyzed files from the cached result
+        analyzed_files = result.summary.get('files_analyzed', [])
+        if not analyzed_files and hasattr(result, 'analyzed_files'):
+            analyzed_files = result.analyzed_files
+        
+        return {
+            "question": question.question,
+            "answer": answer,
+            "analyzed_files": analyzed_files[:10],  # Limit to first 10 files
+            "files_analyzed_count": len(analyzed_files),
+            "timestamp": datetime.now().isoformat()
+        }
         
     except HTTPException:
         raise
     except Exception as e:
+        logger.error(f"Error in ask_question: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -274,10 +382,15 @@ async def ask_question(analysis_id: str, question: CodebaseQuestion):
 async def get_report(analysis_id: str, format: str = "json"):
     """Get the analysis report in specified format"""
     try:
-        if analysis_id not in analysis_cache:
+        # Get cached analysis result from Redis
+        if not redis_client:
+            raise HTTPException(status_code=503, detail="Redis client not available")
+        
+        cached_data = await redis_client.get_cache(f"analysis:{analysis_id}")
+        if not cached_data:
             raise HTTPException(status_code=404, detail="Analysis not found")
         
-        result = analysis_cache[analysis_id]
+        result = deserialize_analysis_result(cached_data)
         
         if format == "json":
             return {
@@ -309,95 +422,19 @@ async def get_report(analysis_id: str, format: str = "json"):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.post("/api/chat", response_model=ChatResponse)
-async def chat_with_codebase(request: ChatRequest):
-    """Chat with the codebase - ask questions and get answers"""
-    import subprocess
-    import re
-    
-    try:
-        # Trim whitespace from the path
-        cleaned_path = request.path.strip()
-        
-        # Check if the path is a GitHub URL
-        github_pattern = r'^https://github\.com/[a-zA-Z0-9_.-]+/[a-zA-Z0-9_.-]+(?:/.*)?$'
-        is_github_url = re.match(github_pattern, cleaned_path)
-        
-        if is_github_url:
-            # Handle GitHub URL
-            print(f"Processing GitHub URL: {cleaned_path}")
-            temp_dir = Path(tempfile.mkdtemp(prefix="codet_chat_github_"))
-            
-            try:
-                # Clone the repository
-                clone_result = subprocess.run(
-                    ['git', 'clone', cleaned_path, str(temp_dir)],
-                    capture_output=True,
-                    text=True,
-                    timeout=300  # 5 minute timeout
-                )
-                
-                if clone_result.returncode != 0:
-                    raise HTTPException(
-                        status_code=400, 
-                        detail=f"Failed to clone repository: {clone_result.stderr}"
-                    )
-                
-                path = temp_dir
-            except subprocess.TimeoutExpired:
-                shutil.rmtree(temp_dir, ignore_errors=True)
-                raise HTTPException(status_code=408, detail="Repository clone timed out")
-            except Exception as e:
-                shutil.rmtree(temp_dir, ignore_errors=True)
-                raise e
-        else:
-            # Handle local path
-            print(f"Processing local path: {cleaned_path}")
-            path = Path(cleaned_path)
-            if not path.exists():
-                raise HTTPException(status_code=404, detail=f"Path not found: {cleaned_path}")
-            temp_dir = None
-        
-        # Initialize orchestrator engine in chat mode
-        chat_engine = OrchestratorEngine(mode="chat")
-        config_path = Path(request.config_path) if hasattr(request, 'config_path') and request.config_path else None
-        chat_engine.initialize_agents(config_path)
-        
-        # Run chat analysis - use defaults if not provided
-        answer = await chat_engine.answer_question(
-            question=request.question,
-            path=path
-        )
-        
-        # Get analyzed files from the chat engine
-        analyzed_files = list(chat_engine.analyzed_files)
-        
-        # Clean up temporary directory if we cloned from GitHub
-        if is_github_url and temp_dir:
-            shutil.rmtree(temp_dir, ignore_errors=True)
-        
-        return ChatResponse(
-            question=request.question,
-            answer=answer,
-            analyzed_files=analyzed_files,
-            files_analyzed_count=len(analyzed_files),
-            timestamp=datetime.now().isoformat()
-        )
-        
-    except HTTPException:
-        if 'temp_dir' in locals() and temp_dir and temp_dir.exists():
-            shutil.rmtree(temp_dir, ignore_errors=True)
-        raise
-    except Exception as e:
-        if 'temp_dir' in locals() and temp_dir and temp_dir.exists():
-            shutil.rmtree(temp_dir, ignore_errors=True)
-        raise HTTPException(status_code=500, detail=str(e))
-
-
 @app.get("/api/health")
 async def health_check():
     """Health check endpoint"""
-    return {"status": "healthy", "timestamp": datetime.now().isoformat()}
+    redis_status = "disconnected"
+    if redis_client:
+        redis_health = await redis_client.health_check()
+        redis_status = redis_health.get("status", "disconnected")
+    
+    return {
+        "status": "healthy", 
+        "timestamp": datetime.now().isoformat(),
+        "redis": redis_status
+    }
 
 
 # Global indexer instance (in production, consider using dependency injection)
@@ -415,141 +452,3 @@ def get_indexer(collection_name: str = "codebase") -> QdrantCodebaseIndexer:
             use_memory=settings.use_memory
         )
     return _indexer_instance
-
-
-@app.post("/api/index", response_model=CodebaseIndexResponse)
-async def index_codebase(
-    request: CodebaseIndexRequest,
-    background_tasks: BackgroundTasks
-):
-    """
-    Index a codebase into Qdrant for semantic search
-    
-    This endpoint parses code files in the specified path and creates embeddings
-    for functions, classes, methods, and other code constructs.
-    
-    Supported languages:
-    - Python (.py)
-    - JavaScript (.js, .jsx, .mjs)
-    - TypeScript (.ts, .tsx)
-    """
-    path = Path(request.path)
-    
-    if not path.exists():
-        raise HTTPException(status_code=404, detail=f"Path not found: {path}")
-    
-    # Parse codebase with file filtering support
-    file_filter = FileFilter.from_path(path)
-    parser = MultiLanguageCodebaseParser(file_filter=file_filter)
-    
-    if path.is_file():
-        chunks = parser.parse_file(str(path))
-    else:
-        chunks = parser.parse_directory(str(path))
-    
-    if not chunks:
-        raise HTTPException(status_code=400, detail="No supported files found to index (Python, JavaScript, TypeScript)")
-    
-    # Index chunks
-    indexer = get_indexer(request.collection_name)
-    
-    # Run indexing in background for large codebases
-    def index_task():
-        indexer.index_chunks(chunks, batch_size=request.batch_size)
-    
-    if len(chunks) > 1000:  # Large codebase, run in background
-        background_tasks.add_task(index_task)
-        status = "indexing_started"
-    else:
-        index_task()
-        status = "completed"
-    
-    # Get statistics
-    stats = indexer.get_statistics()
-    
-    return CodebaseIndexResponse(
-        status=status,
-        total_chunks=len(chunks),
-        type_counts=stats['type_counts'],
-        collection_name=request.collection_name,
-        timestamp=datetime.now().isoformat()
-    )
-
-
-@app.post("/api/search", response_model=CodebaseSearchResponse)
-async def search_codebase(request: CodebaseSearchRequest):
-    """
-    Search indexed codebase using semantic search
-    
-    Supports three search modes:
-    - nlp: Natural language search using sentence transformers
-    - code: Code-to-code similarity search using code embeddings
-    - hybrid: Combines both NLP and code search for best results
-    """
-    indexer = get_indexer(request.collection_name)
-    
-    # Check if collection exists
-    try:
-        stats = indexer.get_statistics()
-        if stats['total_chunks'] == 0:
-            raise HTTPException(status_code=400, detail="No indexed chunks found. Please index codebase first.")
-    except Exception:
-        raise HTTPException(status_code=404, detail=f"Collection '{request.collection_name}' not found")
-    
-    # Perform search
-    if request.search_type == "nlp":
-        results = indexer.search_nlp(request.query, limit=request.limit, filter_dict=request.filter)
-    elif request.search_type == "code":
-        results = indexer.search_code(request.query, limit=request.limit, filter_dict=request.filter)
-    else:  # hybrid
-        hybrid_results = indexer.hybrid_search(
-            request.query, 
-            nlp_limit=request.limit // 2, 
-            code_limit=request.limit
-        )
-        results = hybrid_results['merged'][:request.limit]
-    
-    # Convert to response format
-    search_results = []
-    for result in results:
-        # Create code preview
-        code_lines = result['code'].split('\n')[:5]
-        if len(code_lines) < len(result['code'].split('\n')):
-            code_lines.append("...")
-        code_preview = '\n'.join(code_lines)
-        
-        search_results.append(CodeSearchResult(
-            name=result['name'],
-            signature=result['signature'],
-            code_type=result['code_type'],
-            file_path=result['context']['file_path'],
-            line_from=result['line_from'],
-            line_to=result['line_to'],
-            score=result.get('score', result.get('nlp_score', 0)),
-            docstring=result.get('docstring'),
-            code_preview=code_preview
-        ))
-    
-    return CodebaseSearchResponse(
-        query=request.query,
-        results=search_results,
-        total_results=len(search_results),
-        search_type=request.search_type,
-        timestamp=datetime.now().isoformat()
-    )
-
-
-@app.get("/api/index/stats/{collection_name}")
-async def get_index_statistics(collection_name: str = "codebase"):
-    """Get statistics about an indexed collection"""
-    try:
-        indexer = get_indexer(collection_name)
-        stats = indexer.get_statistics()
-        
-        return {
-            "collection_name": collection_name,
-            "statistics": stats,
-            "timestamp": datetime.now().isoformat()
-        }
-    except Exception as e:
-        raise HTTPException(status_code=404, detail=f"Collection '{collection_name}' not found or error: {str(e)}")

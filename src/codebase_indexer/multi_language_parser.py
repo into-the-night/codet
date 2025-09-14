@@ -674,8 +674,6 @@ class MultiLanguageCodebaseParser:
             file_chunks = self.parse_file(str(file_path))
             chunks.extend(file_chunks)
             
-            if file_chunks:
-                print(f"Parsed {len(file_chunks)} chunks from {file_path}")
         
         return chunks
     

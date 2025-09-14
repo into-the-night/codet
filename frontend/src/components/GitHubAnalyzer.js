@@ -6,13 +6,14 @@ import Button from './Button';
 import Input from './Input';
 import LoadingSpinner from './LoadingSpinner';
 import StatusCard from './StatusCard';
-import CodebaseIndexing from './CodebaseIndexing';
 
 const GitHubAnalyzer = () => {
   const [githubUrl, setGithubUrl] = useState('');
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [error, setError] = useState('');
   const [analysisProgress, setAnalysisProgress] = useState(0);
+  const [uploadedFiles, setUploadedFiles] = useState([]);
+  const fileInputRef = React.useRef(null);
   const navigate = useNavigate();
 
   const validateGitHubUrl = (url) => {
@@ -73,6 +74,74 @@ const GitHubAnalyzer = () => {
   const handleKeyPress = (e) => {
     if (e.key === 'Enter' && !isAnalyzing) {
       handleAnalyze();
+    }
+  };
+
+  const handleFileUpload = (e) => {
+    const files = Array.from(e.target.files);
+    const validFiles = files.filter(file => {
+      const ext = file.name.split('.').pop().toLowerCase();
+      return ['py', 'js', 'jsx', 'mjs', 'ts', 'tsx'].includes(ext);
+    });
+    
+    if (validFiles.length !== files.length) {
+      setError('Some files were skipped. Only .py, .js, .jsx, .mjs, .ts, and .tsx files are allowed.');
+    } else {
+      setError('');
+    }
+    
+    setUploadedFiles(validFiles);
+  };
+
+  const handleUploadAnalyze = async () => {
+    if (uploadedFiles.length === 0) {
+      setError('Please select files to analyze');
+      return;
+    }
+
+    setError('');
+    setIsAnalyzing(true);
+    setAnalysisProgress(0);
+
+    let progressInterval;
+    try {
+      // Simulate progress updates
+      progressInterval = setInterval(() => {
+        setAnalysisProgress(prev => {
+          if (prev >= 90) {
+            clearInterval(progressInterval);
+            return 90;
+          }
+          return prev + Math.random() * 15;
+        });
+      }, 500);
+
+      // Create FormData to upload files
+      const formData = new FormData();
+      uploadedFiles.forEach(file => {
+        formData.append('files', file);
+      });
+
+      // Call the backend API to upload and analyze
+      const response = await axios.post('/api/upload', formData, {
+        headers: {
+          'Content-Type': 'multipart/form-data'
+        }
+      });
+
+      clearInterval(progressInterval);
+      setAnalysisProgress(100);
+
+      // Navigate to analysis results
+      setTimeout(() => {
+        navigate(`/analysis/${response.data.analysis_id}`);
+      }, 1000);
+
+    } catch (err) {
+      clearInterval(progressInterval);
+      setError(err.response?.data?.detail || 'Failed to analyze files. Please try again.');
+      setIsAnalyzing(false);
+      setAnalysisProgress(0);
     }
   };
 
@@ -152,7 +221,50 @@ const GitHubAnalyzer = () => {
               <div className="divider-line"></div>
             </div>
 
-            <CodebaseIndexing />
+            <div className="upload-section">
+              <input
+                ref={fileInputRef}
+                type="file"
+                multiple
+                accept=".py,.js,.jsx,.mjs,.ts,.tsx"
+                onChange={handleFileUpload}
+                style={{ display: 'none' }}
+              />
+              <Button
+                variant="secondary"
+                onClick={() => fileInputRef.current?.click()}
+                disabled={isAnalyzing}
+                className="upload-button"
+              >
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                  <path d="M21 15V19C21 20.1046 20.1046 21 19 21H5C3.89543 21 3 20.1046 3 19V15" 
+                        stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                  <path d="M7 10L12 5L17 10" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                  <path d="M12 5V15" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                </svg>
+                Upload
+              </Button>
+              {uploadedFiles.length > 0 && (
+                <div className="uploaded-files-info">
+                  <p className="uploaded-count">{uploadedFiles.length} file(s) selected</p>
+                  <Button
+                    onClick={handleUploadAnalyze}
+                    disabled={isAnalyzing}
+                    className="analyze-upload-button"
+                    size="medium"
+                  >
+                    {isAnalyzing ? (
+                      <>
+                        <LoadingSpinner size="small" />
+                        Analyzing...
+                      </>
+                    ) : (
+                      'Analyze Uploaded Files'
+                    )}
+                  </Button>
+                </div>
+              )}
+            </div>
 
             {isAnalyzing && (
               <div className="progress-section">

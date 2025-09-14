@@ -1,4 +1,4 @@
-"""Configuration management for Code Quality Intelligence Agent"""
+"""Configuration management for Codet"""
 
 from pathlib import Path
 from typing import Optional
@@ -11,7 +11,7 @@ class Settings(BaseSettings):
 
     # Gemini configuration (default cloud LLM)
     google_api_key: Optional[str] = Field(None, alias="GOOGLE_API_KEY")
-    gemini_model: str = Field("gemini-1.5-flash", alias="GEMINI_MODEL")
+    gemini_model: str = Field("gemini-2.5-flash", alias="GEMINI_MODEL")
     
     # Agent settings
     agent_temperature: float = Field(0.1, alias="AGENT_TEMPERATURE")
@@ -48,6 +48,11 @@ class Settings(BaseSettings):
     enable_parallel: bool = Field(True, alias="ENABLE_PARALLEL")
     max_workers: int = Field(4, alias="MAX_WORKERS")
     severity_threshold: str = Field("low", alias="SEVERITY_THRESHOLD")
+    
+    # Repository size thresholds for indexing
+    repo_file_count_threshold: int = Field(100, alias="REPO_FILE_COUNT_THRESHOLD")
+    repo_total_size_threshold: float = Field(10.0, alias="REPO_TOTAL_SIZE_THRESHOLD")  # MB
+    repo_single_file_threshold: float = Field(1.0, alias="REPO_SINGLE_FILE_THRESHOLD")  # MB
     
     # General settings
     verbose: bool = Field(False, alias="VERBOSE")

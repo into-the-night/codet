@@ -3,7 +3,6 @@ import { BrowserRouter as Router, Routes, Route } from 'react-router-dom';
 import './App.css';
 import GitHubAnalyzer from './components/GitHubAnalyzer';
 import AnalysisDashboard from './components/AnalysisDashboard';
-import ChatInterface from './components/ChatInterface';
 import Header from './components/Header';
 
 function App() {
@@ -15,7 +14,6 @@ function App() {
           <Routes>
             <Route path="/" element={<GitHubAnalyzer />} />
             <Route path="/analysis/:analysisId" element={<AnalysisDashboard />} />
-            <Route path="/chat" element={<ChatInterface />} />
           </Routes>
         </main>
       </div>

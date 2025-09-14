@@ -36,6 +36,7 @@ class OrchestratorEngine:
         self.analysis_results = []
         self.analyzed_files = set()
         self._codebase_indexer = None
+        self._cached_analysis_result = None  # Store cached analysis for chat mode
         
     def initialize_agents(self, config_path: Optional[Path] = None, custom_system_prompt: Optional[str] = None):
         """Initialize the orchestrator and file analysis agents"""
@@ -457,7 +458,8 @@ class OrchestratorEngine:
         summary['analysis_type'] = 'orchestrator_analysis'
         summary['tree_statistics'] = tree_data['statistics']
         summary['languages_analyzed'] = 'all'
-        summary['files_analyzed'] = len(self.analyzed_files)
+        summary['files_analyzed'] = list(self.analyzed_files)  # Store the list of files, not just count
+        summary['files_analyzed_count'] = len(self.analyzed_files)  # Store count separately
         summary['orchestrator_iterations'] = getattr(self.orchestrator_agent, 'current_iteration', 0)
         
         # Add orchestrator-specific metrics
@@ -522,3 +524,7 @@ class OrchestratorEngine:
             path=path,
             user_question=question
         )
+    
+    def set_cached_analysis(self, analysis_result: Optional[AnalysisResult]):
+        """Set cached analysis result for use in chat mode"""
+        self._cached_analysis_result = analysis_result

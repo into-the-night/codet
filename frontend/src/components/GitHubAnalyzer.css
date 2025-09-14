@@ -156,6 +156,34 @@
   margin: 0 auto;
 }
 
+/* Upload section styles */
+.upload-section {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  align-items: center;
+}
+
+.upload-button {
+  width: 100%;
+  max-width: 300px;
+}
+
+.uploaded-files-info {
+  text-align: center;
+  width: 100%;
+}
+
+.uploaded-count {
+  color: var(--text-secondary);
+  font-size: 0.875rem;
+  margin-bottom: 12px;
+}
+
+.analyze-upload-button {
+  margin-top: 8px;
+}
+
 @media (max-width: 768px) {
   .github-analyzer {
     padding: 40px 0;

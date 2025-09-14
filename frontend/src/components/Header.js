@@ -27,12 +27,6 @@ const Header = () => {
             >
               Analyze
             </Link>
-            <Link 
-              to="/chat" 
-              className={`nav-link ${location.pathname === '/chat' ? 'active' : ''}`}
-            >
-              Chat
-            </Link>
           </nav>
         </div>
       </div>

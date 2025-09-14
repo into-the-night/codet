@@ -22,14 +22,6 @@ export const getAnalysisResults = async (analysisId) => {
   return response.data;
 };
 
-export const chatWithCodebase = async (question, path, configPath = null) => {
-  const response = await api.post('/api/chat', {
-    question,
-    path,
-    config_path: configPath,
-  });
-  return response.data;
-};
 
 // Codebase indexing API functions
 export const indexCodebase = async (path, collectionName = 'codebase', batchSize = 100) => {
