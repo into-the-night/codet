@@ -8,7 +8,7 @@ An intelligent code quality analysis tool with AI-powered insights and semantic 
 # Clone and setup
 git clone https://github.com/yourusername/codet.git
 cd codet
-cp config/env.example .env  # Add your GOOGLE_API_KEY, (QDRANT_URL & QDRANT_API_KEY if using QDRANT cloud)
+cp config/env.example .env  # Add your GOOGLE_API_KEY, (QDRANT_URL & QDRANT_API_KEY if using QDRANT cloud [PREFERRED])
 ```
 
 ## Features
