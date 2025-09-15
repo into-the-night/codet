@@ -275,8 +275,8 @@ async def analyze_github_repository(request: GitHubAnalysisRequest):
             request = AnalysisRequest(path=str(temp_dir))
             result = await analyze_repository(request)
             # Update the project path to show the original GitHub URL
-            result.project_path = Path(github_url)
-            result.summary['github_url'] = request.github_url
+            result.summary['project_path'] = github_url
+            result.summary['github_url'] = github_url
 
             return result
         except Exception as e:
@@ -298,6 +298,13 @@ async def ask_question(analysis_id: str, question: CodebaseQuestion):
             raise HTTPException(status_code=404, detail="Analysis not found")
         
         result = deserialize_analysis_result(cached_data)
+        path = Path(result.summary.get('temp_dir'))
+        if not path.exists(): # If the API is restarted and has deleted the temp files
+            return {
+                "question": question.question,
+                "answer": "Oops! I lost the files. Please analyze again.",
+                "timestamp": datetime.now().isoformat()
+            }
         
         # Use the orchestrator engine for AI-powered Q&A
         chat_engine = OrchestratorEngine(
@@ -312,19 +319,12 @@ async def ask_question(analysis_id: str, question: CodebaseQuestion):
         # Run chat analysis - use defaults if not provided
         answer = await chat_engine.answer_question(
             question=question.question,
-            path=Path(result.summary.get('temp_dir'))
+            path=path
         )
-        
-        # Get list of analyzed files from the cached result
-        analyzed_files = result.summary.get('files_analyzed', [])
-        if not analyzed_files and hasattr(result, 'analyzed_files'):
-            analyzed_files = result.analyzed_files
         
         return {
             "question": question.question,
             "answer": answer,
-            "analyzed_files": analyzed_files[:10],  # Limit to first 10 files
-            "files_analyzed_count": len(analyzed_files),
             "timestamp": datetime.now().isoformat()
         }
         
@@ -348,11 +348,11 @@ async def get_report(analysis_id: str, format: str = "json"):
             raise HTTPException(status_code=404, detail="Analysis not found")
         
         result = deserialize_analysis_result(cached_data)
-        
+        result.summary['project_path'] = result.summary.get('github_url', result.summary.get('project_path'))
         if format == "json":
             return {
                 "analysis_id": analysis_id,
-                "project_path": str(result.project_path),
+                "project_path": str(result.summary.get('project_path')),
                 "timestamp": result.timestamp,
                 "summary": result.summary,
                 "metrics": result.metrics,
