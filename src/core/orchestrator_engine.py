@@ -303,85 +303,85 @@ class OrchestratorEngine:
                 logger.error(f"query_file error for {file_path}: {e}")
                 return {"success": False, "error": str(e)}
         
-        # query_codebase handler: search and answer questions using indexed codebase
-        async def query_codebase_handler(question: str, search_limit: int = 10) -> Dict[str, Any]:
-            try:
-                # Initialize indexer if needed
-                if not hasattr(self, '_codebase_indexer') or self._codebase_indexer is None:
-                    from ..codebase_indexer import QdrantCodebaseIndexer
-                    from ..core.config import settings
+        # # query_codebase handler: search and answer questions using indexed codebase
+        # async def query_codebase_handler(question: str, search_limit: int = 10) -> Dict[str, Any]:
+        #     try:
+        #         # Initialize indexer if needed
+        #         if not hasattr(self, '_codebase_indexer') or self._codebase_indexer is None:
+        #             from ..codebase_indexer import QdrantCodebaseIndexer
+        #             from ..core.config import settings
                     
-                    self._codebase_indexer = QdrantCodebaseIndexer(
-                        collection_name=self.collection_name,
-                        qdrant_url=settings.qdrant_url,
-                        qdrant_api_key=settings.qdrant_api_key,
-                        use_memory=settings.use_memory
-                    )
+        #             self._codebase_indexer = QdrantCodebaseIndexer(
+        #                 collection_name=self.collection_name,
+        #                 qdrant_url=settings.qdrant_url,
+        #                 qdrant_api_key=settings.qdrant_api_key,
+        #                 use_memory=settings.use_memory
+        #             )
                 
-                # Perform hybrid search
-                results = self._codebase_indexer.hybrid_search(
-                    query=question,
-                    nlp_limit=search_limit,
-                    code_limit=search_limit
-                )
+        #         # Perform hybrid search
+        #         results = self._codebase_indexer.hybrid_search(
+        #             query=question,
+        #             nlp_limit=search_limit,
+        #             code_limit=search_limit
+        #         )
                 
-                # Get repository context
-                repository_context = {
-                    'total_files': tree_data['statistics']['total_files'],
-                    'main_languages': list(tree_data['statistics']['file_extensions'].keys())[:5],
-                    'project_type': self._detect_project_type(tree_data),
-                    'search_results': len(results.get('merged', []))
-                }
+        #         # Get repository context
+        #         repository_context = {
+        #             'total_files': tree_data['statistics']['total_files'],
+        #             'main_languages': list(tree_data['statistics']['file_extensions'].keys())[:5],
+        #             'project_type': self._detect_project_type(tree_data),
+        #             'search_results': len(results.get('merged', []))
+        #         }
                 
-                # Format the answer from search results
-                if results.get('merged'):
-                    # Group results by file
-                    file_results = {}
-                    for result in results.get('merged', [])[:search_limit]:
-                        file_path = result.get('file_path', 'Unknown')
-                        if file_path not in file_results:
-                            file_results[file_path] = []
-                        file_results[file_path].append(result)
+        #         # Format the answer from search results
+        #         if results.get('merged'):
+        #             # Group results by file
+        #             file_results = {}
+        #             for result in results.get('merged', [])[:search_limit]:
+        #                 file_path = result.get('file_path', 'Unknown')
+        #                 if file_path not in file_results:
+        #                     file_results[file_path] = []
+        #                 file_results[file_path].append(result)
                     
-                    # Build the answer
-                    answer_parts = [f"Based on searching the indexed codebase for '{question}', here's what I found:\n"]
+        #             # Build the answer
+        #             answer_parts = [f"Based on searching the indexed codebase for '{question}', here's what I found:\n"]
                     
-                    for file_path, chunks in file_results.items():
-                        answer_parts.append(f"\n**{file_path}:**")
-                        for chunk in chunks:
-                            code_type = chunk.get('code_type', 'code')
-                            content = chunk.get('content', '')
-                            docstring = chunk.get('docstring', '')
+        #             for file_path, chunks in file_results.items():
+        #                 answer_parts.append(f"\n**{file_path}:**")
+        #                 for chunk in chunks:
+        #                     code_type = chunk.get('code_type', 'code')
+        #                     content = chunk.get('content', '')
+        #                     docstring = chunk.get('docstring', '')
                             
-                            if code_type != 'code':
-                                answer_parts.append(f"- {code_type.title()}:")
+        #                     if code_type != 'code':
+        #                         answer_parts.append(f"- {code_type.title()}:")
                             
-                            # Add content preview (first few lines)
-                            content_lines = content.strip().split('\n')
-                            preview = '\n'.join(content_lines[:5])
-                            if len(content_lines) > 5:
-                                preview += '\n    ...'
-                            answer_parts.append(f"```\n{preview}\n```")
+        #                     # Add content preview (first few lines)
+        #                     content_lines = content.strip().split('\n')
+        #                     preview = '\n'.join(content_lines[:5])
+        #                     if len(content_lines) > 5:
+        #                         preview += '\n    ...'
+        #                     answer_parts.append(f"```\n{preview}\n```")
                             
-                            if docstring:
-                                answer_parts.append(f"  Documentation: {docstring}")
+        #                     if docstring:
+        #                         answer_parts.append(f"  Documentation: {docstring}")
                     
-                    answer = '\n'.join(answer_parts)
+        #             answer = '\n'.join(answer_parts)
                     
-                    # Add summary
-                    answer += f"\n\nFound {len(results.get('merged', []))} relevant code chunks across {len(file_results)} files."
-                else:
-                    answer = "No relevant code found in the indexed codebase for this query."
+        #             # Add summary
+        #             answer += f"\n\nFound {len(results.get('merged', []))} relevant code chunks across {len(file_results)} files."
+        #         else:
+        #             answer = "No relevant code found in the indexed codebase for this query."
                 
-                return {
-                    "success": True, 
-                    "answer": answer,
-                    "search_results": len(results.get('merged', [])),
-                    "top_files": list(set(r.get('file_path', '') for r in results.get('merged', [])[:5]))
-                }
-            except Exception as e:
-                logger.error(f"query_codebase error: {e}")
-                return {"success": False, "error": str(e)}
+        #         return {
+        #             "success": True, 
+        #             "answer": answer,
+        #             "search_results": len(results.get('merged', [])),
+        #             "top_files": list(set(r.get('file_path', '') for r in results.get('merged', [])[:5]))
+        #         }
+        #     except Exception as e:
+        #         logger.error(f"query_codebase error: {e}")
+        #         return {"success": False, "error": str(e)}
 
         
         # Base function handlers
@@ -391,9 +391,9 @@ class OrchestratorEngine:
             "AnalyzeFilesBatch": batch_file_analysis_handler
         }
         
-        # Only add query_codebase if codebase is indexed
-        if self.has_indexed_codebase:
-            function_handlers["QueryCodebase"] = query_codebase_handler
+        # # Only add query_codebase if codebase is indexed
+        # if self.has_indexed_codebase:
+        #     function_handlers["QueryCodebase"] = query_codebase_handler
             
         self.orchestrator_agent.function_handlers = function_handlers
         logger.info(f"Function handlers set: {list(self.orchestrator_agent.function_handlers.keys())}")

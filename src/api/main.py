@@ -25,8 +25,8 @@ from .models import (
     AnalysisResponse, 
     CodebaseQuestion,
 )
-from ..codebase_indexer import MultiLanguageCodebaseParser, QdrantCodebaseIndexer
-from ..utils import check_repository_size
+# from ..codebase_indexer import MultiLanguageCodebaseParser, QdrantCodebaseIndexer
+# from ..utils import check_repository_size
 import pickle
 import base64
 
@@ -35,7 +35,7 @@ logger = logging.getLogger(__name__)
 
 # Redis client for caching analysis results
 redis_client = None
-parser = MultiLanguageCodebaseParser()
+# parser = MultiLanguageCodebaseParser()
 
 # Track temporary directories for cleanup
 temp_directories = set()
@@ -142,7 +142,7 @@ async def analyze_repository(request: AnalysisRequest):
         if not request.enable_ai:
             raise HTTPException(status_code=400, detail="AI analysis is required")
         
-        
+
         ######## TURNED OFF INDEXING FOR DEPLOYMENT ########
 
         # Check repository size to determine if indexing is needed
