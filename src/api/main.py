@@ -142,40 +142,42 @@ async def analyze_repository(request: AnalysisRequest):
         if not request.enable_ai:
             raise HTTPException(status_code=400, detail="AI analysis is required")
         
+        
+        ######## TURNED OFF INDEXING FOR DEPLOYMENT ########
+
         # Check repository size to determine if indexing is needed
-        size_check = check_repository_size(str(path))
-            
-        # Auto-index if the codebase is too large
-        if size_check['needs_indexing']:
-            try:
-                logger.info(f"Auto-indexing large codebase: {size_check['reason']}")
-                # Index the codebase for better performance
-                chunks = parser.parse_directory(str(path))
-                indexer = QdrantCodebaseIndexer(
-                    collection_name=f"upload_{uuid.uuid4().hex[:8]}",
-                    qdrant_url=settings.qdrant_url,
-                    qdrant_api_key=settings.qdrant_api_key,
-                    use_memory=settings.use_memory
-                )
-                indexer.index_chunks(chunks, batch_size=100)
-                index_result = indexer.get_statistics()
-                logger.info(f"Indexed {index_result['total_chunks']} chunks")
-                index = True
-            except:
-                logger.error(f"Failed to index codebase:")
-                index = False
-        else:
-            index = False
+        # size_check = check_repository_size(str(path))
+        # # Auto-index if the codebase is too large
+        # if size_check['needs_indexing']:
+        #     try:
+        #         logger.info(f"Auto-indexing large codebase: {size_check['reason']}")
+        #         # Index the codebase for better performance
+        #         chunks = parser.parse_directory(str(path))
+        #         indexer = QdrantCodebaseIndexer(
+        #             collection_name=f"upload_{uuid.uuid4().hex[:8]}",
+        #             qdrant_url=settings.qdrant_url,
+        #             qdrant_api_key=settings.qdrant_api_key,
+        #             use_memory=settings.use_memory
+        #         )
+        #         indexer.index_chunks(chunks, batch_size=100)
+        #         index_result = indexer.get_statistics()
+        #         logger.info(f"Indexed {index_result['total_chunks']} chunks")
+        #         index = True
+        #     except:
+        #         logger.error(f"Failed to index codebase:")
+        #         index = False
+        # else:
+        #     index = False
 
         # Use AI analysis engine
         engine = AnalysisEngine()
         config_path = Path(request.config_path) if hasattr(request, 'config_path') and request.config_path else None
-        engine.enable_analysis(config_path, has_indexed_codebase=index)
+        engine.enable_analysis(config_path, has_indexed_codebase=False)
 
         # Run async analysis
         result = await engine.analyze_repository(path)
         result.summary['temp_dir'] = str(path)
-        result.summary['indexed'] = index
+        result.summary['indexed'] = False
 
         # Cache the result in Redis
         if redis_client:
