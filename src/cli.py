@@ -206,16 +206,12 @@ def analyze(path, output, format, config, use_local, ollama_model, index, collec
                     use_memory=settings.use_memory
                 )
                 progress.update(task, completed=True)
-                
+
                 # Index chunks
                 task = progress.add_task("📥 Indexing chunks...", total=len(chunks))
-                batch_size = 100
-                
-                for i in range(0, len(chunks), batch_size):
-                    batch = chunks[i:i + batch_size]
-                    indexer.index_chunks(batch, batch_size=batch_size)
-                    progress.update(task, completed=min(i + batch_size, len(chunks)))
-                
+                batch_size = 64
+                indexer.index_chunks(chunks, batch_size=batch_size)
+                progress.update(task, completed=True)
                 console.print("[green]✅ Indexing complete![/green]\n")
             else:
                 console.print("[yellow]⚠️  No supported files found to index[/yellow]\n")
@@ -266,7 +262,7 @@ def analyze(path, output, format, config, use_local, ollama_model, index, collec
         
         engine.enable_analysis(
             config_path,
-            has_indexed_codebase=index,
+            has_indexed_codebase=index or needs_indexing,
             collection_name=collection
         )
         
@@ -284,14 +280,6 @@ def analyze(path, output, format, config, use_local, ollama_model, index, collec
         progress.update(task, advance=40)
         
         progress.update(task, completed=100)
-        
-        # Clean up temporary config file if created
-        if use_local and 'temp_config_path' in locals():
-            import os
-            try:
-                os.unlink(temp_config_path)
-            except:
-                pass
     
     # Display results based on format
     if format == 'console':
@@ -348,6 +336,113 @@ def analyze(path, output, format, config, use_local, ollama_model, index, collec
         padding=(1, 2)
     )
     console.print(summary_panel)
+
+    # Initialize chat engine
+    with Progress(
+        SpinnerColumn(style="cyan"),
+        TextColumn("[bold cyan]{task.description}[/bold cyan]"),
+        console=console,
+        transient=True
+    ) as progress:
+        task = progress.add_task("🚀 Initializing chat engine...", total=100)
+        
+        chat_engine = OrchestratorEngine(
+            mode="chat",
+            has_indexed_codebase=index,
+            collection_name=collection
+        )
+        chat_engine.set_cached_analysis(result)
+        progress.update(task, advance=50)
+        
+        # Create temporary config with LLM settings if needed
+        if use_local:
+            import tempfile
+            import yaml
+            
+            # Load existing config or create new one
+            config_data = {}
+            if config:
+                with open(config, 'r') as f:
+                    config_data = yaml.safe_load(f) or {}
+            
+            # Update with local LLM settings
+            if 'agent' not in config_data:
+                config_data['agent'] = {}
+            
+            config_data['agent']['use_local'] = True
+            config_data['agent']['ollama_model'] = ollama_model
+            
+            # Write temporary config
+            with tempfile.NamedTemporaryFile(mode='w', suffix='.yaml', delete=False) as f:
+                yaml.dump(config_data, f)
+                temp_config_path = f.name
+            
+            config_path = Path(temp_config_path)
+        else:
+            config_path = Path(config) if config else None
+        
+        chat_engine.initialize_agents(config_path)
+        progress.update(task, advance=50)
+        progress.update(task, completed=100)
+        
+        # Clean up temporary config file if created
+        if use_local and 'temp_config_path' in locals():
+            import os
+            try:
+                os.unlink(temp_config_path)
+            except:
+                pass
+    
+    console.print("[green]✅ Chat engine ready! Ask me anything about your codebase.[/green]\n")
+    
+    # Create and persist a single event loop for the chat session
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+
+    # Chat loop
+    while True:
+        # Get user question
+        question = Prompt.ask("[bold cyan]You[/bold cyan]")
+        
+        # Check for exit commands
+        if question.lower() in ['exit', 'quit', 'bye', 'q']:
+            console.print("\n[yellow]👋 Thanks for chatting! Goodbye![/yellow]")
+            break
+        
+        # Process the question
+        console.print()
+        with Progress(
+            SpinnerColumn(style="cyan"),
+            TextColumn("[bold cyan]🤔 Thinking...[/bold cyan]"),
+            console=console,
+            transient=True
+        ) as progress:
+            task = progress.add_task("Analyzing codebase...", total=None)
+            
+            try:
+                # Get answer using the persistent loop
+                answer = loop.run_until_complete(chat_engine.answer_question(
+                    question=question,
+                    path=path
+                ))
+                
+                # Show analyzed files
+                if chat_engine.analyzed_files:
+                    console.print(f"\n[dim]📂 Analyzed {len(chat_engine.analyzed_files)} files[/dim]")
+                
+                # Display answer
+                console.print(f"\n[bold green]Codet[/bold green]: {answer}\n")
+                
+            except Exception as e:
+                console.print(f"\n[red]❌ Error: {str(e)}[/red]\n")
+                logger.error(f"Chat error: {e}", exc_info=True)
+
+    # Gracefully shutdown the event loop after chat session ends
+    try:
+        loop.run_until_complete(loop.shutdown_asyncgens())
+    finally:
+        loop.close()
+
 
 
 def _display_console_report(result):
@@ -521,7 +616,14 @@ def chat(path, config, use_local, ollama_model, index, collection, qdrant_url, q
     if needs_indexing:
         qdrant_url = qdrant_url or settings.qdrant_url
         qdrant_api_key = qdrant_api_key or settings.qdrant_api_key
-        collection = collection or path
+        # Sanitize collection name - use directory name or default
+        if not collection:
+            if path == Path('.'):
+                collection = Path.cwd().name  # Use current directory name
+            else:
+                collection = path
+        # Replace any invalid characters
+        collection = collection.replace('.', '_').replace('/', '_').replace('\\', '_')
         info_text += f"\n🔍 RAG Mode: [bold]Enabled (Collection: {collection})[/bold]"
     else:
         info_text += f"\n🔍 RAG Mode: [bold]Disabled[/bold]"
@@ -559,7 +661,7 @@ def chat(path, config, use_local, ollama_model, index, collection, qdrant_url, q
             raise click.Abort()
     
     # Index codebase if requested
-    if index:
+    if index or needs_indexing:
         console.print("[bold cyan]🔍 Indexing codebase for RAG...[/bold cyan]")
         with Progress(
             SpinnerColumn(style="cyan"),
@@ -595,13 +697,9 @@ def chat(path, config, use_local, ollama_model, index, collection, qdrant_url, q
                 
                 # Index chunks
                 task = progress.add_task("📥 Indexing chunks...", total=len(chunks))
-                batch_size = 100
-                
-                for i in range(0, len(chunks), batch_size):
-                    batch = chunks[i:i + batch_size]
-                    indexer.index_chunks(batch, batch_size=batch_size)
-                    progress.update(task, completed=min(i + batch_size, len(chunks)))
-                
+                batch_size = 64
+                indexer.index_chunks(chunks, batch_size=batch_size)
+                progress.update(task, completed=True)
                 console.print("[green]✅ Indexing complete![/green]\n")
             else:
                 console.print("[yellow]⚠️  No supported files found to index[/yellow]\n")

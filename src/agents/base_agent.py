@@ -37,7 +37,6 @@ class BaseAgent:
         # Redis components
         self.redis_client: Optional[RedisClient] = None
         self.message_history_manager: Optional[MessageHistoryManager] = None
-        self.current_session_id: Optional[str] = None
         
         # Initialize LLM based on configuration
         if config.use_local:
@@ -82,42 +81,11 @@ class BaseAgent:
         try:
             self.redis_client = await get_redis_client(self.redis_config)
             self.message_history_manager = MessageHistoryManager(self.redis_client, self.redis_config)
-            logger.info("Redis initialized successfully")
+            print("Redis initialized successfully")
             return True
         except Exception as e:
             logger.error(f"Failed to initialize Redis: {e}")
             return False
-    
-    async def create_session(self, metadata: Optional[Dict[str, Any]] = None) -> str:
-        """Create a new conversation session"""
-        if self.message_history_manager:
-            self.current_session_id = await self.message_history_manager.create_session(
-                self.agent_name, metadata
-            )
-            logger.info(f"Created session {self.current_session_id}")
-            return self.current_session_id
-        else:
-            # Fallback to simple UUID if Redis not available
-            self.current_session_id = str(uuid.uuid4())
-            return self.current_session_id
-    
-    async def set_session(self, session_id: str) -> bool:
-        """Set the current session ID"""
-        if self.message_history_manager:
-            session = await self.message_history_manager.get_session(session_id)
-            if session:
-                self.current_session_id = session_id
-                return True
-            return False
-        else:
-            self.current_session_id = session_id
-            return True
-    
-    async def get_session_info(self) -> Optional[Dict[str, Any]]:
-        """Get current session information"""
-        if self.current_session_id and self.message_history_manager:
-            return await self.message_history_manager.get_session_summary(self.current_session_id)
-        return None
     
     def _generate_cache_key(self, prompt: str, context: Dict[str, Any]) -> str:
         """Generate a cache key for the prompt and context"""
@@ -175,18 +143,12 @@ class BaseAgent:
         cache_key = self._generate_cache_key(prompt, context)
         cached_response = await self._get_from_cache(cache_key)
         if cached_response:
-            logger.info(f"Using cached response for {self.agent_name}")
+            print(f"Using cached response for {self.agent_name}")
             return cached_response
         
         try:
             # Build the full prompt
             full_prompt = self._build_prompt(prompt, context)
-            
-            # Add message to history if session exists
-            if self.current_session_id and self.message_history_manager:
-                await self.message_history_manager.add_message(
-                    self.current_session_id, MessageRole.HUMAN, prompt, context
-                )
             
             # Create messages
             messages = [
@@ -196,23 +158,17 @@ class BaseAgent:
             
             # Generate response with timing
             start_time = time.time()
-            logger.info(f"[LLM DEBUG] {self.agent_name} - Invoking LLM for generate_response")
+            print(f"[LLM DEBUG] {self.agent_name} - Invoking LLM for generate_response")
             logger.debug(f"[LLM DEBUG] Prompt preview (first 500 chars): {full_prompt[:500]}...")
             
             response = await self.llm.ainvoke(messages)
             
             elapsed_time = time.time() - start_time
-            logger.info(f"[LLM DEBUG] {self.agent_name} - LLM response received in {elapsed_time:.2f}s")
+            print(f"[LLM DEBUG] {self.agent_name} - LLM response received in {elapsed_time:.2f}s")
             
             # Extract content
             response_text = response.content if hasattr(response, 'content') else str(response)
-            logger.debug(f"[LLM DEBUG] Response preview (first 500 chars): {response_text[:500]}...")
-            
-            # Add AI response to history if session exists
-            if self.current_session_id and self.message_history_manager:
-                await self.message_history_manager.add_message(
-                    self.current_session_id, MessageRole.AI, response_text
-                )
+            print(f"[LLM DEBUG] Response preview: {response_text}")
             
             # Cache the response
             await self._add_to_cache(cache_key, response_text)
@@ -258,18 +214,18 @@ class BaseAgent:
             
             # Generate response with timing
             start_time = time.time()
-            logger.info(f"[LLM DEBUG] {self.agent_name} - Invoking LLM for generate_structured_response")
+            print(f"[LLM DEBUG] {self.agent_name} - Invoking LLM for generate_structured_response")
             logger.debug(f"[LLM DEBUG] Prompt preview (first 500 chars): {full_prompt[:500]}...")
-            logger.debug(f"[LLM DEBUG] Response schema: {response_schema.__name__}")
+            print(f"[LLM DEBUG] Response schema: {response_schema.__name__}")
             
             response = await self.llm.ainvoke(messages)
             
             elapsed_time = time.time() - start_time
-            logger.info(f"[LLM DEBUG] {self.agent_name} - LLM response received in {elapsed_time:.2f}s")
+            print(f"[LLM DEBUG] {self.agent_name} - LLM response received in {elapsed_time:.2f}s")
             
             # Extract content
             response_text = response.content if hasattr(response, 'content') else str(response)
-            logger.debug(f"[LLM DEBUG] Response preview (first 500 chars): {response_text[:500]}...")
+            print(f"[LLM DEBUG] Response preview: {response_text}")
             
             # Parse the structured response
             try:
@@ -329,7 +285,7 @@ class BaseAgent:
     
     async def generate_structured_response_with_functions(self, prompt: str, 
                                                         response_schema: Type[T],
-                                                        function_declarations: List[Dict[str, Any]],
+                                                        function_declarations: List[BaseModel],
                                                         function_handlers: Dict[str, Callable],
                                                         context: Dict[str, Any] = None) -> T:
         """Generate a structured response with function calling support"""
@@ -359,18 +315,16 @@ class BaseAgent:
             
             # First invocation with tools
             start_time = time.time()
-            logger.info(f"[LLM DEBUG] {self.agent_name} - Invoking LLM with function tools")
-            logger.debug(f"[LLM DEBUG] Available functions: {[f['function']['name'] if 'function' in f else f.get('name', 'unknown') for f in function_declarations]}")
-            logger.debug(f"[LLM DEBUG] Prompt preview (first 500 chars): {full_prompt[:500]}...")
-            
+            print(f"[LLM DEBUG] {self.agent_name} - Invoking LLM with function tools")
+            print(f"[LLM DEBUG] Prompt preview: {full_prompt}...")
             response = await llm_with_tools.ainvoke(messages)
             
             elapsed_time = time.time() - start_time
-            logger.info(f"[LLM DEBUG] {self.agent_name} - Initial LLM response with tools received in {elapsed_time:.2f}s")
+            print(f"[LLM DEBUG] {self.agent_name} - Initial LLM response with tools received in {elapsed_time:.2f}s, response: {response}")
             
             # Check if the response contains tool calls
             if hasattr(response, 'tool_calls') and response.tool_calls:
-                logger.info(f"Tool calls detected: {[call['name'] for call in response.tool_calls]}")
+                print(f"Tool calls detected: {[call['name'] for call in response.tool_calls]}")
                 
                 # Execute tool calls
                 tool_messages = []
@@ -392,7 +346,7 @@ class BaseAgent:
                                 content=result_content,
                                 tool_call_id=tool_call['id']
                             ))
-                            logger.info(f"Function {function_name} executed successfully")
+                            print(f"Function {function_name} executed successfully with result: {result_content}")
                             
                         except Exception as e:
                             logger.error(f"Error executing function {function_name}: {e}")
@@ -424,14 +378,14 @@ class BaseAgent:
                 
                 # Use with_structured_output for the final response
                 start_time = time.time()
-                logger.info(f"[LLM DEBUG] {self.agent_name} - Invoking LLM for final structured response after tool execution")
+                print(f"[LLM DEBUG] {self.agent_name} - Invoking LLM for final structured response after tool execution")
                 
                 structured_llm = self.llm.with_structured_output(response_schema)
                 final_result = await structured_llm.ainvoke(messages)
                 
                 elapsed_time = time.time() - start_time
-                logger.info(f"[LLM DEBUG] {self.agent_name} - Final structured response received in {elapsed_time:.2f}s")
-                logger.debug(f"[LLM DEBUG] Final result type: {type(final_result).__name__}")
+                print(f"[LLM DEBUG] {self.agent_name} - Final structured response received in {elapsed_time:.2f}s")
+                print(f"[LLM DEBUG] Final result: {final_result}")
                 
                 # Cache the result
                 await self._add_to_cache(cache_key, final_result.model_dump_json())
@@ -439,7 +393,7 @@ class BaseAgent:
                 
             else:
                 # No tool calls detected - still need to get structured response
-                logger.info("No tool calls detected in response, requesting structured output")
+                print("No tool calls detected in response, requesting structured output")
                 
                 # Add the AI response to messages
                 messages.append(response)
@@ -458,6 +412,8 @@ class BaseAgent:
                 # Get structured response
                 structured_llm = self.llm.with_structured_output(response_schema)
                 final_result = await structured_llm.ainvoke(messages)
+
+                print(f"[LLM DEBUG] {self.agent_name} - Final structured response received in {elapsed_time:.2f}s, response: {final_result}")
                 
                 # Cache the result
                 await self._add_to_cache(cache_key, final_result.model_dump_json())

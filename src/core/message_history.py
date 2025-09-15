@@ -27,8 +27,8 @@ class Message:
     """Individual message in conversation history"""
     role: MessageRole
     content: str
-    timestamp: datetime
-    message_id: str
+    timestamp: Optional[datetime] = None
+    message_id: Optional[str] = None
     metadata: Optional[Dict[str, Any]] = None
     
     def to_dict(self) -> Dict[str, Any]:
@@ -36,9 +36,6 @@ class Message:
         return {
             'role': self.role.value,
             'content': self.content,
-            'timestamp': self.timestamp.isoformat(),
-            'message_id': self.message_id,
-            'metadata': self.metadata or {}
         }
     
     @classmethod
@@ -131,15 +128,10 @@ class MessageHistoryManager:
     async def add_message(self, session_id: str, role: MessageRole, content: str, 
                          metadata: Optional[Dict[str, Any]] = None) -> str:
         """Add a message to the conversation history"""
-        message_id = str(uuid.uuid4())
-        now = datetime.now()
         
         message = Message(
             role=role,
             content=content,
-            timestamp=now,
-            message_id=message_id,
-            metadata=metadata
         )
         
         # Add message to Redis list
@@ -155,7 +147,6 @@ class MessageHistoryManager:
         await self.redis_client._client.expire(f"messages:{session_id}", self.config.message_history_ttl)
         
         logger.debug(f"Added {role.value} message to session {session_id}")
-        return message_id
     
     async def get_messages(self, session_id: str, limit: Optional[int] = None) -> List[Message]:
         """Get messages from conversation history"""
@@ -193,7 +184,6 @@ class MessageHistoryManager:
         """Clear all messages from a session"""
         try:
             await self.redis_client._client.delete(f"messages:{session_id}")
-            await self._update_session_metadata(session_id, {'message_count': 0})
             logger.info(f"Cleared messages for session {session_id}")
             return True
         except Exception as e:
@@ -235,63 +225,6 @@ class MessageHistoryManager:
             'metadata': session.metadata
         }
     
-    async def search_messages(self, session_id: str, query: str, limit: int = 10) -> List[Message]:
-        """Search messages by content"""
-        messages = await self.get_messages(session_id)
-        query_lower = query.lower()
-        
-        matching_messages = []
-        for message in messages:
-            if query_lower in message.content.lower():
-                matching_messages.append(message)
-                if len(matching_messages) >= limit:
-                    break
-        
-        return matching_messages
-    
-    async def get_conversation_context(self, session_id: str, max_messages: int = 20) -> str:
-        """Get formatted conversation context for AI agents"""
-        messages = await self.get_recent_messages(session_id, max_messages)
-        
-        context_parts = []
-        for message in messages:
-            role_prefix = {
-                MessageRole.SYSTEM: "System",
-                MessageRole.HUMAN: "Human",
-                MessageRole.AI: "AI",
-                MessageRole.FUNCTION: "Function"
-            }.get(message.role, "Unknown")
-            
-            context_parts.append(f"{role_prefix}: {message.content}")
-        
-        return "\n".join(context_parts)
-    
-    async def _get_message_count(self, session_id: str) -> int:
-        """Get message count for session"""
-        try:
-            return await self.redis_client._client.llen(f"messages:{session_id}")
-        except Exception:
-            return 0
-    
-    async def _update_session_metadata(self, session_id: str, updates: Dict[str, Any]) -> bool:
-        """Update session metadata"""
-        try:
-            session = await self.get_session(session_id)
-            if session:
-                session.metadata.update(updates)
-                session.updated_at = datetime.now()
-                
-                await self.redis_client._client.setex(
-                    f"session:{session_id}",
-                    self.config.message_history_ttl,
-                    json.dumps(session.to_dict(), default=str)
-                )
-                return True
-            return False
-        except Exception as e:
-            logger.error(f"Error updating session metadata for {session_id}: {e}")
-            return False
-    
     async def get_all_sessions(self, agent_name: Optional[str] = None) -> List[ConversationSession]:
         """Get all sessions, optionally filtered by agent"""
         try:
@@ -315,8 +248,3 @@ class MessageHistoryManager:
         except Exception as e:
             logger.error(f"Error getting all sessions: {e}")
             return []
-    
-    async def cleanup_expired_sessions(self) -> int:
-        """Clean up expired sessions (Redis TTL handles this automatically, but this is for manual cleanup)"""
-        # Redis automatically handles TTL, but we can add manual cleanup logic here if needed
-        return 0

@@ -5,6 +5,7 @@ from typing import Dict, Any, List, Optional
 from pathlib import Path
 from datetime import datetime
 import asyncio
+import uuid
 
 from ..analyzers.analyzer import AnalysisResult, CodeIssue
 from ..core.repository_tree import RepositoryTreeConstructor
@@ -31,7 +32,7 @@ class OrchestratorEngine:
         # Initialize agents
         self.orchestrator_agent = None
         self.file_analysis_agent = None
-        
+
         # Analysis state
         self.analysis_results = []
         self.analyzed_files = set()
@@ -47,13 +48,14 @@ class OrchestratorEngine:
                 full_config = self.config
             
             full_config.validate()
-            
+
             # Initialize agents with the same config and mode
             self.orchestrator_agent = OrchestratorAgent(
-                full_config.agent, 
-                mode=self.mode, 
+                full_config.agent,
+                full_config.redis,
+                mode=self.mode,
                 custom_system_prompt=custom_system_prompt,
-                has_indexed_codebase=self.has_indexed_codebase
+                has_indexed_codebase=self.has_indexed_codebase,
             )
             self.file_analysis_agent = FileAnalysisAgent(full_config.agent)
             
@@ -302,8 +304,7 @@ class OrchestratorEngine:
                 return {"success": False, "error": str(e)}
         
         # query_codebase handler: search and answer questions using indexed codebase
-        async def query_codebase_handler(question: str, collection_name: Optional[str] = None, 
-                                       search_limit: int = 10) -> Dict[str, Any]:
+        async def query_codebase_handler(question: str, search_limit: int = 10) -> Dict[str, Any]:
             try:
                 # Initialize indexer if needed
                 if not hasattr(self, '_codebase_indexer') or self._codebase_indexer is None:
@@ -311,7 +312,7 @@ class OrchestratorEngine:
                     from ..core.config import settings
                     
                     self._codebase_indexer = QdrantCodebaseIndexer(
-                        collection_name=collection_name or self.collection_name,
+                        collection_name=self.collection_name,
                         qdrant_url=settings.qdrant_url,
                         qdrant_api_key=settings.qdrant_api_key,
                         use_memory=settings.use_memory
@@ -385,14 +386,14 @@ class OrchestratorEngine:
         
         # Base function handlers
         function_handlers = {
-            "query_file": query_file_handler,
-            "analyze_file": file_analysis_handler,
-            "analyze_files_batch": batch_file_analysis_handler
+            "QueryFile": query_file_handler,
+            "AnalyzeFile": file_analysis_handler,
+            "AnalyzeFilesBatch": batch_file_analysis_handler
         }
         
         # Only add query_codebase if codebase is indexed
         if self.has_indexed_codebase:
-            function_handlers["query_codebase"] = query_codebase_handler
+            function_handlers["QueryCodebase"] = query_codebase_handler
             
         self.orchestrator_agent.function_handlers = function_handlers
         logger.info(f"Function handlers set: {list(self.orchestrator_agent.function_handlers.keys())}")
