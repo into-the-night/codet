@@ -334,12 +334,12 @@ const AnalysisDashboard = () => {
               {isLoadingChat && (
                 <div className="message ai loading">
                   <div className="message-header">
-                    <span className="message-type">🤖 AI Assistant</span>
+                    <span className="message-type">codet</span>
                     <span className="message-time">Now</span>
                   </div>
                   <div className="message-content">
                     <LoadingSpinner size="small" />
-                    <span>Analyzing your codebase...</span>
+                    <span>Thinking...</span>
                   </div>
                 </div>
               )}

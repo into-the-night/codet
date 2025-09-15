@@ -11,6 +11,7 @@ from .schemas import AnalysisResponseSchema, CodeIssueSchema, ChatResponseSchema
 from ..core.config import AgentConfig, RedisConfig
 from ..analyzers.analyzer import CodeIssue, IssueCategory, IssueSeverity
 from .tools import AnalyzeFile, AnalyzeFilesBatch, QueryCodebase, QueryFile
+from ..core.message_history import MessageRole
 
 logger = logging.getLogger(__name__)
 
@@ -368,7 +369,7 @@ After analyzing relevant files, provide a comprehensive answer that directly add
             if self.chat_answer:
                 logger.info(f"Chat orchestration complete: {len(self.analyzed_files)} files analyzed")
                 if self.session_id:
-                    await self.message_history_manager.add_message(self.session_id, role="assistant", content=self.chat_answer)
+                    await self.message_history_manager.add_message(self.session_id, role=MessageRole.AI, content=self.chat_answer)
                 return self.chat_answer
             else:
                 # Fallback: generate a simple answer if no answer was stored
