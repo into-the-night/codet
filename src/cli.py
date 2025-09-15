@@ -114,9 +114,8 @@ def analyze(path, output, format, config, use_local, ollama_model, index, collec
     )
     
     size_check = size_checker.check_repository(path)
-    needs_indexing = size_check['needs_indexing'] or index  # Force index if flag is set
+    needs_indexing = size_check['needs_indexing'] or index
 
-    # Show initial info
     if use_local:
         llm_mode = "Local (Ollama)"
         llm_model = ollama_model
@@ -133,13 +132,11 @@ def analyze(path, output, format, config, use_local, ollama_model, index, collec
     if needs_indexing:
         qdrant_url = qdrant_url or settings.qdrant_url
         qdrant_api_key = qdrant_api_key or settings.qdrant_api_key
-        # Sanitize collection name - use directory name or default
         if not collection:
             if path == Path('.'):
                 collection = Path.cwd().name  # Use current directory name
             else:
                 collection = path
-        # Replace any invalid characters
         collection = collection.replace('.', '_').replace('/', '_').replace('\\', '_')
         info_text += f"\n[bold cyan]🔍 RAG Mode:[/bold cyan] Enabled (Collection: {collection})"
     
@@ -150,7 +147,6 @@ def analyze(path, output, format, config, use_local, ollama_model, index, collec
     ))
     console.print()
     
-    # Check if Ollama is running when using local mode
     if use_local:
         if not check_ollama_running(ollama_model):
             console.print("[bold red]❌ Ollama is not running or not accessible.[/bold red]")
@@ -163,7 +159,6 @@ def analyze(path, output, format, config, use_local, ollama_model, index, collec
             console.print("[dim]For more information, visit: https://ollama.ai[/dim]")
             raise click.Abort()
     else:
-        # Check for Google API key when not using local mode
         if not settings.google_api_key:
             console.print("[bold red]❌ Google API key not found.[/bold red]")
             console.print("[yellow]Please set the GOOGLE_API_KEY environment variable:[/yellow]")
@@ -172,7 +167,7 @@ def analyze(path, output, format, config, use_local, ollama_model, index, collec
             console.print("[dim]Get your API key at: https://aistudio.google.com/app/apikey[/dim]")
             raise click.Abort()
     
-    # Index codebase if requested
+    # Index codebase
     if index or needs_indexing:
         console.print("[bold cyan]🔍 Indexing codebase for RAG...[/bold cyan]")
         with Progress(
@@ -182,9 +177,7 @@ def analyze(path, output, format, config, use_local, ollama_model, index, collec
             TaskProgressColumn(),
             console=console
         ) as progress:
-            # Parse codebase
             task = progress.add_task("🔍 Parsing codebase...", total=None)
-            # Create parser with file filtering support
             file_filter = FileFilter.from_path(path)
             parser = MultiLanguageCodebaseParser(file_filter=file_filter)
             
@@ -207,7 +200,6 @@ def analyze(path, output, format, config, use_local, ollama_model, index, collec
                 )
                 progress.update(task, completed=True)
 
-                # Index chunks
                 task = progress.add_task("📥 Indexing chunks...", total=len(chunks))
                 batch_size = 64
                 indexer.index_chunks(chunks, batch_size=batch_size)
@@ -233,25 +225,21 @@ def analyze(path, output, format, config, use_local, ollama_model, index, collec
         
         progress.update(task, description="🧠 Configuring orchestrator analysis...")
         
-        # Create temporary config with LLM settings if needed
         if use_local:
             import tempfile
             import yaml
             
-            # Load existing config or create new one
             config_data = {}
             if config:
                 with open(config, 'r') as f:
                     config_data = yaml.safe_load(f) or {}
             
-            # Update with local LLM settings
             if 'agent' not in config_data:
                 config_data['agent'] = {}
             
             config_data['agent']['use_local'] = True
             config_data['agent']['ollama_model'] = ollama_model
             
-            # Write temporary config
             with tempfile.NamedTemporaryFile(mode='w', suffix='.yaml', delete=False) as f:
                 yaml.dump(config_data, f)
                 temp_config_path = f.name
@@ -275,7 +263,6 @@ def analyze(path, output, format, config, use_local, ollama_model, index, collec
         progress.update(task, advance=20)
         
         progress.update(task, description="🎯 Orchestrator analyzing files...")
-        # Run async analysis
         result = asyncio.run(engine.analyze_repository(path))
         progress.update(task, advance=40)
         
@@ -354,12 +341,10 @@ def analyze(path, output, format, config, use_local, ollama_model, index, collec
         chat_engine.set_cached_analysis(result)
         progress.update(task, advance=50)
         
-        # Create temporary config with LLM settings if needed
         if use_local:
             import tempfile
             import yaml
-            
-            # Load existing config or create new one
+
             config_data = {}
             if config:
                 with open(config, 'r') as f:
@@ -401,15 +386,12 @@ def analyze(path, output, format, config, use_local, ollama_model, index, collec
 
     # Chat loop
     while True:
-        # Get user question
         question = Prompt.ask("[bold cyan]You[/bold cyan]")
         
-        # Check for exit commands
         if question.lower() in ['exit', 'quit', 'bye', 'q']:
             console.print("\n[yellow]👋 Thanks for chatting! Goodbye![/yellow]")
             break
         
-        # Process the question
         console.print()
         with Progress(
             SpinnerColumn(style="cyan"),
@@ -426,11 +408,6 @@ def analyze(path, output, format, config, use_local, ollama_model, index, collec
                     path=path
                 ))
                 
-                # Show analyzed files
-                if chat_engine.analyzed_files:
-                    console.print(f"\n[dim]📂 Analyzed {len(chat_engine.analyzed_files)} files[/dim]")
-                
-                # Display answer
                 console.print(f"\n[bold green]Codet[/bold green]: {answer}\n")
                 
             except Exception as e:
@@ -496,7 +473,6 @@ def _display_console_report(result):
     if result.issues:
         console.print(f"\n[bold magenta]🔍 All Issues Found ({len(result.issues)} total):[/bold magenta]")
         
-        # Group issues by severity for better organization
         issues_by_severity = {}
         for issue in result.issues:
             severity = issue.severity.value
@@ -564,255 +540,6 @@ def serve(host, port):
         port=port,
         reload=True
     )
-
-
-@main.command()
-@click.argument('path', type=click.Path(exists=True), required=False)
-@click.option('--config', '-c', type=click.Path(exists=True), help='⚙️  Configuration file path')
-@click.option('--use-local', is_flag=True, help='🏠 Use local Ollama LLM instead of Gemini')
-@click.option('--ollama-model', default='llama3.2', help='🤖 Ollama model to use (default: llama3.2)')
-@click.option('--index', is_flag=True, help='🔍 Index codebase for RAG before chat')
-@click.option('--collection', default=None, help='📦 Qdrant collection name (used with --index)')
-@click.option('--qdrant-url', default=None, help='🌐 Qdrant server URL (used with --index)')
-@click.option('--qdrant-api-key', default=None, help='🔑 Qdrant API key (used with --index)')
-def chat(path, config, use_local, ollama_model, index, collection, qdrant_url, qdrant_api_key):
-    """💬 Chat with your codebase - Ask questions and get AI-powered answers
-    
-    Have a conversation with your code! Ask questions about architecture,
-    functionality, or get help understanding any part of your codebase.
-    
-    With the --index flag, the codebase will be indexed into Qdrant for RAG
-    (Retrieval-Augmented Generation) before starting the chat, enabling semantic
-    search to provide more accurate and context-aware answers.
-    """
-    
-    # Get path if not provided
-    if not path:
-        path = Prompt.ask("📁 Enter the path to analyze", default=".")
-    path = Path(path)
-    
-    if not path.exists():
-        console.print(f"[red]❌ Error: Path '{path}' does not exist![/red]")
-        return
-    
-    # Check if repository needs indexing
-    size_checker = RepoSizeChecker(
-        file_count_threshold=settings.repo_file_count_threshold,
-        total_size_threshold=settings.repo_total_size_threshold,
-        single_file_threshold=settings.repo_single_file_threshold
-    )
-    
-    size_check = size_checker.check_repository(path)
-    needs_indexing = size_check['needs_indexing'] or index  # Force index if flag is set
-    
-    # Show chat interface
-    console.print()
-    info_text = (
-        "[bold cyan]💬 Welcome to Codet Chat Mode![/bold cyan]\n\n"
-        f"📁 Repository: [bold]{path.absolute()}[/bold]\n"
-        f"🤖 LLM Mode: [bold]{'Local (Ollama)' if use_local else 'Cloud (Gemini)'}[/bold]"
-    )
-    
-    if needs_indexing:
-        qdrant_url = qdrant_url or settings.qdrant_url
-        qdrant_api_key = qdrant_api_key or settings.qdrant_api_key
-        # Sanitize collection name - use directory name or default
-        if not collection:
-            if path == Path('.'):
-                collection = Path.cwd().name  # Use current directory name
-            else:
-                collection = path
-        # Replace any invalid characters
-        collection = collection.replace('.', '_').replace('/', '_').replace('\\', '_')
-        info_text += f"\n🔍 RAG Mode: [bold]Enabled (Collection: {collection})[/bold]"
-    else:
-        info_text += f"\n🔍 RAG Mode: [bold]Disabled[/bold]"
-    
-    info_text += "\n\n[dim]Type 'exit' or 'quit' to end the conversation[/dim]"
-    
-    console.print(Panel(
-        info_text,
-        title="[bold]Chat Interface[/bold]",
-        border_style="cyan",
-        padding=(1, 2)
-    ))
-    console.print()
-    
-    # Check if Ollama is running when using local mode
-    if use_local:
-        if not check_ollama_running(ollama_model):
-            console.print("[bold red]❌ Ollama is not running or not accessible.[/bold red]")
-            console.print("[yellow]Please ensure Ollama is running with the following command:[/yellow]")
-            console.print("[bold]ollama serve[/bold]")
-            console.print()
-            console.print("[yellow]Then ensure your model is installed:[/yellow]")
-            console.print(f"[bold]ollama pull {ollama_model}[/bold]")
-            console.print()
-            console.print("[dim]For more information, visit: https://ollama.ai[/dim]")
-            raise click.Abort()
-    else:
-        # Check for Google API key when not using local mode
-        if not settings.google_api_key:
-            console.print("[bold red]❌ Google API key not found.[/bold red]")
-            console.print("[yellow]Please set the GOOGLE_API_KEY environment variable:[/yellow]")
-            console.print("[bold]export GOOGLE_API_KEY='your-api-key'[/bold]")
-            console.print()
-            console.print("[dim]Get your API key at: https://aistudio.google.com/app/apikey[/dim]")
-            raise click.Abort()
-    
-    # Index codebase if requested
-    if index or needs_indexing:
-        console.print("[bold cyan]🔍 Indexing codebase for RAG...[/bold cyan]")
-        with Progress(
-            SpinnerColumn(style="cyan"),
-            TextColumn("[progress.description]{task.description}"),
-            BarColumn(style="cyan"),
-            TaskProgressColumn(),
-            console=console
-        ) as progress:
-            # Parse codebase
-            task = progress.add_task("🔍 Parsing codebase...", total=None)
-            # Create parser with file filtering support
-            file_filter = FileFilter.from_path(path)
-            parser = MultiLanguageCodebaseParser(file_filter=file_filter)
-            
-            if path.is_file():
-                chunks = parser.parse_file(str(path))
-            else:
-                chunks = parser.parse_directory(str(path))
-            
-            progress.update(task, completed=True)
-            console.print(f"[green]✅ Found {len(chunks)} code chunks[/green]")
-            
-            if chunks:
-                # Initialize indexer  
-                task = progress.add_task("🚀 Initializing Qdrant indexer...", total=None)
-                indexer = QdrantCodebaseIndexer(
-                    collection_name=collection,
-                    qdrant_url=qdrant_url,
-                    qdrant_api_key=qdrant_api_key,
-                    use_memory=settings.use_memory
-                )
-                progress.update(task, completed=True)
-                
-                # Index chunks
-                task = progress.add_task("📥 Indexing chunks...", total=len(chunks))
-                batch_size = 64
-                indexer.index_chunks(chunks, batch_size=batch_size)
-                progress.update(task, completed=True)
-                console.print("[green]✅ Indexing complete![/green]\n")
-            else:
-                console.print("[yellow]⚠️  No supported files found to index[/yellow]\n")
-    
-
-    # Initialize chat engine
-    with Progress(
-        SpinnerColumn(style="cyan"),
-        TextColumn("[bold cyan]{task.description}[/bold cyan]"),
-        console=console,
-        transient=True
-    ) as progress:
-        task = progress.add_task("🚀 Initializing chat engine...", total=100)
-        
-        collection = collection or path
-        
-        chat_engine = OrchestratorEngine(
-            mode="chat",
-            has_indexed_codebase=index,
-            collection_name=collection
-        )
-
-        progress.update(task, advance=50)
-        
-        # Create temporary config with LLM settings if needed
-        if use_local:
-            import tempfile
-            import yaml
-            
-            # Load existing config or create new one
-            config_data = {}
-            if config:
-                with open(config, 'r') as f:
-                    config_data = yaml.safe_load(f) or {}
-            
-            # Update with local LLM settings
-            if 'agent' not in config_data:
-                config_data['agent'] = {}
-            
-            config_data['agent']['use_local'] = True
-            config_data['agent']['ollama_model'] = ollama_model
-            
-            # Write temporary config
-            with tempfile.NamedTemporaryFile(mode='w', suffix='.yaml', delete=False) as f:
-                yaml.dump(config_data, f)
-                temp_config_path = f.name
-            
-            config_path = Path(temp_config_path)
-        else:
-            config_path = Path(config) if config else None
-        
-        chat_engine.initialize_agents(config_path)
-        progress.update(task, advance=50)
-        progress.update(task, completed=100)
-        
-        # Clean up temporary config file if created
-        if use_local and 'temp_config_path' in locals():
-            import os
-            try:
-                os.unlink(temp_config_path)
-            except:
-                pass
-    
-    console.print("[green]✅ Chat engine ready! Ask me anything about your codebase.[/green]\n")
-    
-    # Create and persist a single event loop for the chat session
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
-
-    # Chat loop
-    while True:
-        # Get user question
-        question = Prompt.ask("[bold cyan]You[/bold cyan]")
-        
-        # Check for exit commands
-        if question.lower() in ['exit', 'quit', 'bye', 'q']:
-            console.print("\n[yellow]👋 Thanks for chatting! Goodbye![/yellow]")
-            break
-        
-        # Process the question
-        console.print()
-        with Progress(
-            SpinnerColumn(style="cyan"),
-            TextColumn("[bold cyan]🤔 Thinking...[/bold cyan]"),
-            console=console,
-            transient=True
-        ) as progress:
-            task = progress.add_task("Analyzing codebase...", total=None)
-            
-            try:
-                # Get answer using the persistent loop
-                answer = loop.run_until_complete(chat_engine.answer_question(
-                    question=question,
-                    path=path
-                ))
-                
-                # Show analyzed files
-                if chat_engine.analyzed_files:
-                    console.print(f"\n[dim]📂 Analyzed {len(chat_engine.analyzed_files)} files[/dim]")
-                
-                # Display answer
-                console.print(f"\n[bold green]Codet[/bold green]: {answer}\n")
-                
-            except Exception as e:
-                console.print(f"\n[red]❌ Error: {str(e)}[/red]\n")
-                logger.error(f"Chat error: {e}", exc_info=True)
-
-    # Gracefully shutdown the event loop after chat session ends
-    try:
-        loop.run_until_complete(loop.shutdown_asyncgens())
-    finally:
-        loop.close()
-
 
 if __name__ == '__main__':
     main()

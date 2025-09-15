@@ -200,11 +200,6 @@ const AnalysisDashboard = () => {
                   GitHub URL: <code>{summary?.github_url}</code>
                 </>
               )}
-              {summary?.project_path && (
-                <>
-                  Repository: <code>{summary?.project_path}</code>
-                </>
-              )}
             </p>
           </div>
           <button 

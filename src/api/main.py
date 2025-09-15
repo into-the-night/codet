@@ -220,8 +220,6 @@ async def upload_files(
         
         # Save uploaded files
         for file in files:
-            # Use the original filename which includes path for folder uploads
-            # The frontend sends the relative path as the filename when preserve_structure is true
             file_path = temp_dir / file.filename
             file_path.parent.mkdir(parents=True, exist_ok=True)
             
@@ -232,7 +230,7 @@ async def upload_files(
         # Analyze the uploaded files
         request = AnalysisRequest(path=str(temp_dir))
         response = await analyze_repository(request)
-        
+
         return response
         
     except Exception as e:
@@ -258,7 +256,6 @@ async def analyze_github_repository(request: GitHubAnalysisRequest):
         temp_directories.add(str(temp_dir))  # Track for cleanup
         
         try:
-            # Clone the repository
             clone_result = subprocess.run(
                 ['git', 'clone', request.github_url, str(temp_dir)],
                 capture_output=True,
@@ -273,12 +270,16 @@ async def analyze_github_repository(request: GitHubAnalysisRequest):
                 )
             
             request = AnalysisRequest(path=str(temp_dir))
-            result = await analyze_repository(request)
-            # Update the project path to show the original GitHub URL
-            result.summary['project_path'] = github_url
-            result.summary['github_url'] = github_url
+            response = await analyze_repository(request)
+            
+            if redis_client:
+                cached_data = await redis_client.get_cache(f"analysis:{response.analysis_id}")
+                if cached_data:
+                    result = deserialize_analysis_result(cached_data)
+                    result.summary['github_url'] = github_url
+                    await redis_client.set_cache(f"analysis:{response.analysis_id}", serialize_analysis_result(result), ttl=3600)
 
-            return result
+            return response
         except Exception as e:
             raise HTTPException(status_code=500, detail=str(e))
     except Exception as e:
@@ -289,7 +290,6 @@ async def analyze_github_repository(request: GitHubAnalysisRequest):
 async def ask_question(analysis_id: str, question: CodebaseQuestion):
     """Ask a question about the analyzed codebase"""
     try:
-        # Get cached analysis result from Redis
         if not redis_client:
             raise HTTPException(status_code=503, detail="Redis client not available")
         
@@ -306,17 +306,14 @@ async def ask_question(analysis_id: str, question: CodebaseQuestion):
                 "timestamp": datetime.now().isoformat()
             }
         
-        # Use the orchestrator engine for AI-powered Q&A
         chat_engine = OrchestratorEngine(
             mode="chat",
             has_indexed_codebase=result.summary.get('indexed', False)
         )
         
-        # Pass the cached analysis result to the chat engine
         chat_engine.set_cached_analysis(result)
         chat_engine.initialize_agents()
-        
-        # Run chat analysis - use defaults if not provided
+
         answer = await chat_engine.answer_question(
             question=question.question,
             path=path
@@ -339,7 +336,6 @@ async def ask_question(analysis_id: str, question: CodebaseQuestion):
 async def get_report(analysis_id: str, format: str = "json"):
     """Get the analysis report in specified format"""
     try:
-        # Get cached analysis result from Redis
         if not redis_client:
             raise HTTPException(status_code=503, detail="Redis client not available")
         
@@ -394,5 +390,3 @@ async def health_check():
     }
 
 
-# Global indexer instance (in production, consider using dependency injection)
-_indexer_instance: Optional[QdrantCodebaseIndexer] = None

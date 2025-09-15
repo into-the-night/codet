@@ -143,7 +143,6 @@ class BaseAgent:
         cache_key = self._generate_cache_key(prompt, context)
         cached_response = await self._get_from_cache(cache_key)
         if cached_response:
-            print(f"Using cached response for {self.agent_name}")
             return cached_response
         
         try:
@@ -156,21 +155,8 @@ class BaseAgent:
                 HumanMessage(content=full_prompt)
             ]
             
-            # Generate response with timing
-            start_time = time.time()
-            print(f"[LLM DEBUG] {self.agent_name} - Invoking LLM for generate_response")
-            logger.debug(f"[LLM DEBUG] Prompt preview (first 500 chars): {full_prompt[:500]}...")
-            
-            response = await self.llm.ainvoke(messages)
-            
-            elapsed_time = time.time() - start_time
-            print(f"[LLM DEBUG] {self.agent_name} - LLM response received in {elapsed_time:.2f}s")
-            
-            # Extract content
+            response = await self.llm.ainvoke(messages)    
             response_text = response.content if hasattr(response, 'content') else str(response)
-            print(f"[LLM DEBUG] Response preview: {response_text}")
-            
-            # Cache the response
             await self._add_to_cache(cache_key, response_text)
             
             return response_text
@@ -212,38 +198,25 @@ class BaseAgent:
                 HumanMessage(content=full_prompt)
             ]
             
-            # Generate response with timing
-            start_time = time.time()
-            print(f"[LLM DEBUG] {self.agent_name} - Invoking LLM for generate_structured_response")
-            logger.debug(f"[LLM DEBUG] Prompt preview (first 500 chars): {full_prompt[:500]}...")
-            print(f"[LLM DEBUG] Response schema: {response_schema.__name__}")
-            
+
             response = await self.llm.ainvoke(messages)
-            
-            elapsed_time = time.time() - start_time
-            print(f"[LLM DEBUG] {self.agent_name} - LLM response received in {elapsed_time:.2f}s")
-            
+
             # Extract content
             response_text = response.content if hasattr(response, 'content') else str(response)
-            print(f"[LLM DEBUG] Response preview: {response_text}")
             
             # Parse the structured response
             try:
-                # Check if response is empty or whitespace only
                 if not response_text or not response_text.strip():
                     logger.warning("Received empty response from LLM")
-                    # Return a default empty response
                     return response_schema.model_validate({"issues": []})
                 
                 result = parser.parse(response_text)
-                # Cache the JSON string
                 await self._add_to_cache(cache_key, response_text)
                 return result
             except Exception as parse_error:
                 logger.warning(f"Failed to parse structured response: {parse_error}")
                 # Try to extract JSON from the response
                 try:
-                    # Look for JSON in the response
                     import re
                     
                     # First try to extract JSON from markdown code blocks
@@ -266,10 +239,8 @@ class BaseAgent:
                     logger.warning(f"Failed to extract JSON from response: {e}")
                     pass
                 
-                # If all parsing fails, return a schema-appropriate default instead of raising
                 logger.error(f"All JSON parsing attempts failed, returning empty response. Original error: {parse_error}")
                 try:
-                    # Prefer defaults based on known fields
                     if 'issues' in response_schema.model_fields:
                         return response_schema.model_validate({"issues": []})
                     if 'answer' in response_schema.model_fields:
@@ -301,30 +272,17 @@ class BaseAgent:
                 pass
         
         try:
-            # Build the full prompt
             full_prompt = self._build_prompt(prompt, context)
-            
-            # Bind tools to the LLM
             llm_with_tools = self.llm.bind_tools(function_declarations)
             
-            # Create initial messages
             messages = [
                 SystemMessage(content=self.system_prompt),
                 HumanMessage(content=full_prompt)
             ]
             
             # First invocation with tools
-            start_time = time.time()
-            print(f"[LLM DEBUG] {self.agent_name} - Invoking LLM with function tools")
-            print(f"[LLM DEBUG] Prompt preview: {full_prompt}...")
             response = await llm_with_tools.ainvoke(messages)
-            
-            elapsed_time = time.time() - start_time
-            print(f"[LLM DEBUG] {self.agent_name} - Initial LLM response with tools received in {elapsed_time:.2f}s, response: {response}")
-            
-            # Check if the response contains tool calls
             if hasattr(response, 'tool_calls') and response.tool_calls:
-                print(f"Tool calls detected: {[call['name'] for call in response.tool_calls]}")
                 
                 # Execute tool calls
                 tool_messages = []
@@ -346,7 +304,6 @@ class BaseAgent:
                                 content=result_content,
                                 tool_call_id=tool_call['id']
                             ))
-                            print(f"Function {function_name} executed successfully with result: {result_content}")
                             
                         except Exception as e:
                             logger.error(f"Error executing function {function_name}: {e}")
@@ -361,9 +318,7 @@ class BaseAgent:
                             tool_call_id=tool_call['id']
                         ))
                 
-                # Add tool messages to conversation
                 messages.extend([response] + tool_messages)
-                
                 # Add a clear instruction for structured output
                 schema_name = response_schema.__name__
                 final_prompt = f"""Based on the function execution results above, provide your final response as a {schema_name}. 
@@ -376,26 +331,14 @@ class BaseAgent:
                 
                 messages.append(HumanMessage(content=final_prompt))
                 
-                # Use with_structured_output for the final response
-                start_time = time.time()
-                print(f"[LLM DEBUG] {self.agent_name} - Invoking LLM for final structured response after tool execution")
-                
                 structured_llm = self.llm.with_structured_output(response_schema)
                 final_result = await structured_llm.ainvoke(messages)
                 
-                elapsed_time = time.time() - start_time
-                print(f"[LLM DEBUG] {self.agent_name} - Final structured response received in {elapsed_time:.2f}s")
-                print(f"[LLM DEBUG] Final result: {final_result}")
-                
-                # Cache the result
                 await self._add_to_cache(cache_key, final_result.model_dump_json())
                 return final_result
                 
             else:
                 # No tool calls detected - still need to get structured response
-                print("No tool calls detected in response, requesting structured output")
-                
-                # Add the AI response to messages
                 messages.append(response)
                 
                 # Add instruction for structured output
@@ -413,8 +356,6 @@ class BaseAgent:
                 structured_llm = self.llm.with_structured_output(response_schema)
                 final_result = await structured_llm.ainvoke(messages)
 
-                print(f"[LLM DEBUG] {self.agent_name} - Final structured response received in {elapsed_time:.2f}s, response: {final_result}")
-                
                 # Cache the result
                 await self._add_to_cache(cache_key, final_result.model_dump_json())
                 return final_result
@@ -430,10 +371,7 @@ class BaseAgent:
             # Try direct JSON parsing first
             return json.loads(response)
         except json.JSONDecodeError:
-            # Try to extract JSON from markdown code blocks
             import re
-            
-            # Look for JSON in code blocks
             json_pattern = r'```(?:json)?\s*(\{.*?\})\s*```'
             matches = re.findall(json_pattern, response, re.DOTALL)
             
@@ -443,7 +381,6 @@ class BaseAgent:
                 except json.JSONDecodeError:
                     continue
             
-            # Look for JSON anywhere in the response
             json_match = re.search(r'\{.*\}', response, re.DOTALL)
             if json_match:
                 try:
