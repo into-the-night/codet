@@ -27,8 +27,8 @@ gitpython>=3.1.0
 gitignore-parser>=0.1.0
 
 # CLI
-click>=8.1.0
-rich>=13.0.0
+# click>=8.1.0
+# rich>=13.0.0
 
 # Testing
 pytest>=7.4.0
@@ -39,12 +39,13 @@ pytest-cov>=4.1.0
 langchain>=0.1.0
 langchain-google-genai>=1.0.0
 langchain-core>=0.1.0
-langchain-ollama>=0.1.0
 
+#### TURNED OFF FOR DEPLOYMENT ####
+# langchain-ollama>=0.1.0
 # Vector database and embeddings
-qdrant-client>=1.7.0
-sentence-transformers>=2.2.0
-transformers>=4.36.0
+# qdrant-client>=1.7.0
+# sentence-transformers>=2.2.0
+# transformers>=4.36.0
 
 # Utilities
 pyyaml>=6.0

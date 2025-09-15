@@ -8,7 +8,8 @@ import time
 from typing import Dict, Any, List, Optional, Type, TypeVar, Callable
 from pathlib import Path
 
-from langchain_ollama import ChatOllama
+#### TURNED OFF FOR DEPLOYMENT ####
+# from langchain_ollama import ChatOllama
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_core.messages import HumanMessage, SystemMessage, AIMessage, ToolMessage
 from langchain_core.tools import tool
@@ -38,22 +39,24 @@ class BaseAgent:
         self.redis_client: Optional[RedisClient] = None
         self.message_history_manager: Optional[MessageHistoryManager] = None
         
+        ##### TURNED OFF FOR DEPLOYMENT ####
         # Initialize LLM based on configuration
-        if config.use_local:
+        # if config.use_local:
             # Initialize Ollama for local LLM
-            self.llm = ChatOllama(
-                model=config.ollama_model,
-                temperature=config.temperature,
-                num_predict=config.max_tokens
-            )
-        else:
-            # Initialize Gemini (default cloud LLM)
-            self.llm = ChatGoogleGenerativeAI(
-                model=config.gemini_model,
-                google_api_key=config.google_api_key,
-                temperature=config.temperature,
-                max_output_tokens=config.max_tokens
-            )
+            # self.llm = ChatOllama(
+            #     model=config.ollama_model,
+            #     temperature=config.temperature,
+            #     num_predict=config.max_tokens
+            # )
+        # else:
+
+        # Initialize Gemini (default cloud LLM)
+        self.llm = ChatGoogleGenerativeAI(
+            model=config.gemini_model,
+            google_api_key=config.google_api_key,
+            temperature=config.temperature,
+            max_output_tokens=config.max_tokens
+        )
 
         
         # Create prompt template
