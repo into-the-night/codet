@@ -164,9 +164,18 @@
   align-items: center;
 }
 
-.upload-button {
+.upload-buttons {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+  justify-content: center;
   width: 100%;
-  max-width: 300px;
+}
+
+.upload-button {
+  min-width: 150px;
+  flex: 1;
+  max-width: 200px;
 }
 
 .uploaded-files-info {

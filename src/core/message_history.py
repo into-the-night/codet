@@ -125,8 +125,7 @@ class MessageHistoryManager:
             logger.error(f"Error getting session {session_id}: {e}")
             return None
     
-    async def add_message(self, session_id: str, role: MessageRole, content: str, 
-                         metadata: Optional[Dict[str, Any]] = None) -> str:
+    async def add_message(self, session_id: str, role: MessageRole, content: str) -> str:
         """Add a message to the conversation history"""
         
         message = Message(
@@ -139,9 +138,6 @@ class MessageHistoryManager:
             f"messages:{session_id}",
             json.dumps(message.to_dict(), default=str)
         )
-        
-        # Update session metadata
-        await self._update_session_metadata(session_id, {'message_count': await self._get_message_count(session_id)})
         
         # Set TTL on the message list
         await self.redis_client._client.expire(f"messages:{session_id}", self.config.message_history_ttl)

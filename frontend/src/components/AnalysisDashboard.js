@@ -91,8 +91,6 @@ const AnalysisDashboard = () => {
         id: Date.now() + 1,
         type: 'ai',
         content: response.data.answer,
-        analyzedFiles: response.data.analyzed_files,
-        filesAnalyzedCount: response.data.files_analyzed_count,
         timestamp: response.data.timestamp
       };
 
@@ -153,7 +151,7 @@ const AnalysisDashboard = () => {
   // Extract GitHub repo information from the summary or project_path if available
   const extractGithubRepo = () => {
     // Check both github_url and project_path
-    const githubUrl = summary?.github_url || analysisData?.project_path;
+    const githubUrl = summary?.github_url || summary?.project_path;
     
     if (githubUrl && typeof githubUrl === 'string') {
       // Fix common typos (missing slash after https:)
@@ -178,7 +176,7 @@ const AnalysisDashboard = () => {
   console.log('Analysis Data:', analysisData);
   console.log('Summary:', summary);
   console.log('GitHub URL from summary:', summary?.github_url);
-  console.log('Project Path:', analysisData?.project_path);
+  console.log('Project Path:', summary?.project_path);
   console.log('Extracted GitHub Repo:', githubRepo);
 
   return (
@@ -197,7 +195,11 @@ const AnalysisDashboard = () => {
           <div className="header-content">
             <h1 className="dashboard-title">Analysis Results</h1>
             <p className="dashboard-subtitle">
-              Repository: <code>{analysisData.project_path}</code>
+              {summary?.github_url && (
+                <>
+                  GitHub URL: <code>{summary?.github_url}</code>
+                </>
+              )}
             </p>
           </div>
           <button 
@@ -313,33 +315,18 @@ const AnalysisDashboard = () => {
                   <div className="message-content">
                     {message.content}
                   </div>
-                  {message.type === 'ai' && message.analyzedFiles && (
-                    <div className="message-meta">
-                      <div className="analyzed-files">
-                        <strong>Analyzed {message.filesAnalyzedCount} files:</strong>
-                        <div className="file-list">
-                          {message.analyzedFiles.slice(0, 5).map((file, index) => (
-                            <span key={index} className="file-tag">{file}</span>
-                          ))}
-                          {message.analyzedFiles.length > 5 && (
-                            <span className="file-tag more">+{message.analyzedFiles.length - 5} more</span>
-                          )}
-                        </div>
-                      </div>
-                    </div>
-                  )}
                 </div>
               ))}
 
               {isLoadingChat && (
                 <div className="message ai loading">
                   <div className="message-header">
-                    <span className="message-type">🤖 AI Assistant</span>
+                    <span className="message-type">codet</span>
                     <span className="message-time">Now</span>
                   </div>
                   <div className="message-content">
                     <LoadingSpinner size="small" />
-                    <span>Analyzing your codebase...</span>
+                    <span>Thinking...</span>
                   </div>
                 </div>
               )}
