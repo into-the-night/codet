@@ -1,6 +1,6 @@
 """FastAPI application for Codet"""
 
-from fastapi import FastAPI, UploadFile, File, HTTPException
+from fastapi import FastAPI, UploadFile, File, HTTPException, Form
 from fastapi.middleware.cors import CORSMiddleware
 from pathlib import Path
 from typing import List, Optional
@@ -139,18 +139,44 @@ async def analyze_repository(request: AnalysisRequest):
         # Generate unique analysis ID
         analysis_id = str(uuid.uuid4())
         
-        
         if not request.enable_ai:
             raise HTTPException(status_code=400, detail="AI analysis is required")
         
+        # Check repository size to determine if indexing is needed
+        size_check = check_repository_size(str(path))
+            
+        # Auto-index if the codebase is too large
+        if size_check['needs_indexing']:
+            try:
+                logger.info(f"Auto-indexing large codebase: {size_check['reason']}")
+                # Index the codebase for better performance
+                chunks = parser.parse_directory(str(path))
+                indexer = QdrantCodebaseIndexer(
+                    collection_name=f"upload_{uuid.uuid4().hex[:8]}",
+                    qdrant_url=settings.qdrant_url,
+                    qdrant_api_key=settings.qdrant_api_key,
+                    use_memory=settings.use_memory
+                )
+                indexer.index_chunks(chunks, batch_size=100)
+                index_result = indexer.get_statistics()
+                logger.info(f"Indexed {index_result['total_chunks']} chunks")
+                index = True
+            except:
+                logger.error(f"Failed to index codebase:")
+                index = False
+        else:
+            index = False
+
         # Use AI analysis engine
         engine = AnalysisEngine()
         config_path = Path(request.config_path) if hasattr(request, 'config_path') and request.config_path else None
-        engine.enable_analysis(config_path)
+        engine.enable_analysis(config_path, has_indexed_codebase=index)
 
         # Run async analysis
         result = await engine.analyze_repository(path)
-        
+        result.summary['temp_dir'] = str(path)
+        result.summary['indexed'] = index
+
         # Cache the result in Redis
         if redis_client:
             await redis_client.set_cache(f"analysis:{analysis_id}", serialize_analysis_result(result), ttl=3600)  # 1 hour TTL
@@ -174,7 +200,7 @@ async def analyze_repository(request: AnalysisRequest):
         if ai_issues_count > 0:
             response_data.summary['ai_issues_count'] = ai_issues_count
             response_data.summary['ai_enabled'] = True
-        
+
         return response_data
         
     except Exception as e:
@@ -182,7 +208,10 @@ async def analyze_repository(request: AnalysisRequest):
 
 
 @app.post("/api/upload")
-async def upload_files(files: List[UploadFile] = File(...)):
+async def upload_files(
+    files: List[UploadFile] = File(...),
+    preserve_structure: Optional[bool] = Form(False)
+):
     """Upload files for analysis with auto-indexing for large codebases"""
     try:
         # Create temporary directory
@@ -191,31 +220,15 @@ async def upload_files(files: List[UploadFile] = File(...)):
         
         # Save uploaded files
         for file in files:
+            # Use the original filename which includes path for folder uploads
+            # The frontend sends the relative path as the filename when preserve_structure is true
             file_path = temp_dir / file.filename
             file_path.parent.mkdir(parents=True, exist_ok=True)
             
             with open(file_path, 'wb') as f:
                 content = await file.read()
                 f.write(content)
-        
-        # Check repository size to determine if indexing is needed
-        size_check = check_repository_size(str(temp_dir))
-        
-        # Auto-index if the codebase is too large
-        if size_check['needs_indexing']:
-            logger.info(f"Auto-indexing large codebase: {size_check['reason']}")
-            # Index the codebase for better performance
-            chunks = parser.parse_directory(str(temp_dir))
-            indexer = QdrantCodebaseIndexer(
-                collection_name=f"upload_{uuid.uuid4().hex[:8]}",
-                qdrant_url=settings.qdrant_url,
-                qdrant_api_key=settings.qdrant_api_key,
-                use_memory=settings.use_memory
-            )
-            indexer.index_chunks(chunks, batch_size=100)
-            index_result = indexer.get_statistics()
-            logger.info(f"Indexed {index_result['total_chunks']} chunks")
-        
+
         # Analyze the uploaded files
         request = AnalysisRequest(path=str(temp_dir))
         response = await analyze_repository(request)
@@ -236,6 +249,7 @@ async def analyze_github_repository(request: GitHubAnalysisRequest):
     try:
         # Validate GitHub URL
         github_pattern = r'^https://github\.com/[a-zA-Z0-9_.-]+/[a-zA-Z0-9_.-]+(?:/.*)?$'
+        github_url = request.github_url.replace('.git', '')
         if not re.match(github_pattern, request.github_url):
             raise HTTPException(status_code=400, detail="Invalid GitHub repository URL")
         
@@ -258,74 +272,15 @@ async def analyze_github_repository(request: GitHubAnalysisRequest):
                     detail=f"Failed to clone repository: {clone_result.stderr}"
                 )
             
-            # Generate unique analysis ID
-            analysis_id = str(uuid.uuid4())
-            
-            # Check repository size to determine if indexing is needed
-            size_check = check_repository_size(str(temp_dir))
-            
-            # Auto-index if the codebase is too large
-            if size_check['needs_indexing']:
-                logger.info(f"Auto-indexing large codebase: {size_check['reason']}")
-                # Index the codebase for better performance
-                chunks = parser.parse_directory(str(temp_dir))
-                indexer = QdrantCodebaseIndexer(
-                    collection_name=f"upload_{uuid.uuid4().hex[:8]}",
-                    qdrant_url=settings.qdrant_url,
-                    qdrant_api_key=settings.qdrant_api_key,
-                    use_memory=settings.use_memory
-                )
-                indexer.index_chunks(chunks, batch_size=100)
-                index_result = indexer.get_statistics()
-                logger.info(f"Indexed {index_result['total_chunks']} chunks")
-            
-            if not request.enable_ai:
-                raise HTTPException(status_code=400, detail="AI analysis is required")
-            
-            # Use AI analysis engine
-            engine = AnalysisEngine()
-            config_path = Path(request.config_path) if hasattr(request, 'config_path') and request.config_path else None
-            engine.enable_analysis(config_path)
-
-            # Run async analysis
-            result = await engine.analyze_repository(temp_dir)
-            
+            request = AnalysisRequest(path=str(temp_dir))
+            result = await analyze_repository(request)
             # Update the project path to show the original GitHub URL
-            result.project_path = Path(request.github_url)
-            result.summary['temp_dir'] = str(temp_dir)
-            
-            # Cache the result in Redis
-            if redis_client:
-                await redis_client.set_cache(f"analysis:{analysis_id}", serialize_analysis_result(result), ttl=3600)  # 1 hour TTL
-            else:
-                logger.warning("Redis client not available, skipping cache")
-            
-            # Count AI-detected issues
-            ai_issues_count = len([i for i in result.issues if i.metadata and i.metadata.get('ai_detected')])
-            
-            # Create response
-            response_data = AnalysisResponse(
-                analysis_id=analysis_id,
-                status="completed",
-                summary=result.summary,
-                issues_count=len(result.issues),
-                quality_score=result.summary.get('quality_score', 0),
-                timestamp=result.timestamp
-            )
-            
-            # Add AI analysis info to summary
-            if ai_issues_count > 0:
-                response_data.summary['ai_issues_count'] = ai_issues_count
-                response_data.summary['ai_enabled'] = True
-            
-            # Add GitHub URL to summary
-            response_data.summary['github_url'] = request.github_url
-            
-            return response_data
+            result.project_path = Path(github_url)
+            result.summary['github_url'] = request.github_url
+
+            return result
         except Exception as e:
             raise HTTPException(status_code=500, detail=str(e))
-    except HTTPException:
-        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -345,11 +300,13 @@ async def ask_question(analysis_id: str, question: CodebaseQuestion):
         result = deserialize_analysis_result(cached_data)
         
         # Use the orchestrator engine for AI-powered Q&A
-        chat_engine = OrchestratorEngine(mode="chat")
+        chat_engine = OrchestratorEngine(
+            mode="chat",
+            has_indexed_codebase=result.summary.get('indexed', False)
+        )
         
         # Pass the cached analysis result to the chat engine
         chat_engine.set_cached_analysis(result)
-        
         chat_engine.initialize_agents()
         
         # Run chat analysis - use defaults if not provided
@@ -439,16 +396,3 @@ async def health_check():
 
 # Global indexer instance (in production, consider using dependency injection)
 _indexer_instance: Optional[QdrantCodebaseIndexer] = None
-
-
-def get_indexer(collection_name: str = "codebase") -> QdrantCodebaseIndexer:
-    """Get or create indexer instance"""
-    global _indexer_instance
-    if _indexer_instance is None or _indexer_instance.collection_name != collection_name:
-        _indexer_instance = QdrantCodebaseIndexer(
-            collection_name=collection_name,
-            qdrant_url=settings.qdrant_url,
-            qdrant_api_key=settings.qdrant_api_key,
-            use_memory=settings.use_memory
-        )
-    return _indexer_instance

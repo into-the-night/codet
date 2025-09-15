@@ -13,7 +13,9 @@ const GitHubAnalyzer = () => {
   const [error, setError] = useState('');
   const [analysisProgress, setAnalysisProgress] = useState(0);
   const [uploadedFiles, setUploadedFiles] = useState([]);
+  const [uploadMode, setUploadMode] = useState('files'); // 'files' or 'folder'
   const fileInputRef = React.useRef(null);
+  const folderInputRef = React.useRef(null);
   const navigate = useNavigate();
 
   const validateGitHubUrl = (url) => {
@@ -38,16 +40,28 @@ const GitHubAnalyzer = () => {
 
     let progressInterval;
     try {
-      // Simulate progress updates
+      // Simulate progress updates (slower for more realistic feel)
       progressInterval = setInterval(() => {
         setAnalysisProgress(prev => {
           if (prev >= 90) {
             clearInterval(progressInterval);
             return 90;
           }
-          return prev + Math.random() * 15;
+          // Variable speed based on stage for more realistic feel
+          let increment;
+          if (prev < 30) {
+            // Cloning: slightly faster
+            increment = 0.8 + Math.random() * 2.2;
+          } else if (prev < 60) {
+            // Scanning: medium speed
+            increment = 0.6 + Math.random() * 1.8;
+          } else {
+            // Analyzing: slower as it gets complex
+            increment = 0.4 + Math.random() * 1.4;
+          }
+          return Math.min(prev + increment, 90);
         });
-      }, 500);
+      }, 2500);
 
       // Call the backend API to clone and analyze
       const response = await axios.post('/api/analyze-github', {
@@ -77,7 +91,7 @@ const GitHubAnalyzer = () => {
     }
   };
 
-  const handleFileUpload = (e) => {
+  const handleFileUpload = (e, isFolder = false) => {
     const files = Array.from(e.target.files);
     const validFiles = files.filter(file => {
       const ext = file.name.split('.').pop().toLowerCase();
@@ -85,12 +99,25 @@ const GitHubAnalyzer = () => {
     });
     
     if (validFiles.length !== files.length) {
-      setError('Some files were skipped. Only .py, .js, .jsx, .mjs, .ts, and .tsx files are allowed.');
+      const skippedCount = files.length - validFiles.length;
+      setError(`${skippedCount} file(s) were skipped. Only .py, .js, .jsx, .mjs, .ts, and .tsx files are allowed.`);
     } else {
       setError('');
     }
     
-    setUploadedFiles(validFiles);
+    // For folder uploads, preserve the relative paths
+    if (isFolder && validFiles.length > 0) {
+      const filesWithPaths = validFiles.map(file => {
+        // webkitRelativePath contains the folder structure
+        file.relativePath = file.webkitRelativePath || file.name;
+        return file;
+      });
+      setUploadedFiles(filesWithPaths);
+    } else {
+      setUploadedFiles(validFiles);
+    }
+    
+    setUploadMode(isFolder ? 'folder' : 'files');
   };
 
   const handleUploadAnalyze = async () => {
@@ -105,22 +132,44 @@ const GitHubAnalyzer = () => {
 
     let progressInterval;
     try {
-      // Simulate progress updates
+      // Simulate progress updates (slower for more realistic feel)
       progressInterval = setInterval(() => {
         setAnalysisProgress(prev => {
           if (prev >= 90) {
             clearInterval(progressInterval);
             return 90;
           }
-          return prev + Math.random() * 15;
+          // Variable speed based on stage for more realistic feel
+          let increment;
+          if (prev < 30) {
+            // Cloning: slightly faster
+            increment = 0.8 + Math.random() * 2.2;
+          } else if (prev < 60) {
+            // Scanning: medium speed
+            increment = 0.6 + Math.random() * 1.8;
+          } else {
+            // Analyzing: slower as it gets complex
+            increment = 0.4 + Math.random() * 1.4;
+          }
+          return Math.min(prev + increment, 90);
         });
-      }, 500);
+      }, 2500);
 
       // Create FormData to upload files
       const formData = new FormData();
-      uploadedFiles.forEach(file => {
-        formData.append('files', file);
-      });
+      
+      // If folder upload, include relative paths
+      if (uploadMode === 'folder') {
+        uploadedFiles.forEach(file => {
+          // Append file with its relative path as metadata
+          formData.append('files', file, file.relativePath || file.name);
+        });
+        formData.append('preserve_structure', 'true');
+      } else {
+        uploadedFiles.forEach(file => {
+          formData.append('files', file);
+        });
+      }
 
       // Call the backend API to upload and analyze
       const response = await axios.post('/api/upload', formData, {
@@ -227,26 +276,53 @@ const GitHubAnalyzer = () => {
                 type="file"
                 multiple
                 accept=".py,.js,.jsx,.mjs,.ts,.tsx"
-                onChange={handleFileUpload}
+                onChange={(e) => handleFileUpload(e, false)}
                 style={{ display: 'none' }}
               />
-              <Button
-                variant="secondary"
-                onClick={() => fileInputRef.current?.click()}
-                disabled={isAnalyzing}
-                className="upload-button"
-              >
-                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-                  <path d="M21 15V19C21 20.1046 20.1046 21 19 21H5C3.89543 21 3 20.1046 3 19V15" 
-                        stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
-                  <path d="M7 10L12 5L17 10" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
-                  <path d="M12 5V15" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
-                </svg>
-                Upload
-              </Button>
+              <input
+                ref={folderInputRef}
+                type="file"
+                webkitdirectory=""
+                directory=""
+                multiple
+                onChange={(e) => handleFileUpload(e, true)}
+                style={{ display: 'none' }}
+              />
+              <div className="upload-buttons">
+                <Button
+                  variant="secondary"
+                  onClick={() => fileInputRef.current?.click()}
+                  disabled={isAnalyzing}
+                  className="upload-button"
+                >
+                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                    <path d="M21 15V19C21 20.1046 20.1046 21 19 21H5C3.89543 21 3 20.1046 3 19V15" 
+                          stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                    <path d="M7 10L12 5L17 10" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                    <path d="M12 5V15" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                  </svg>
+                  Upload Files
+                </Button>
+                <Button
+                  variant="secondary"
+                  onClick={() => folderInputRef.current?.click()}
+                  disabled={isAnalyzing}
+                  className="upload-button"
+                >
+                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                    <path d="M22 19C22 19.5304 21.7893 20.0391 21.4142 20.4142C21.0391 20.7893 20.5304 21 20 21H4C3.46957 21 2.96086 20.7893 2.58579 20.4142C2.21071 20.0391 2 19.5304 2 19V5C2 4.46957 2.21071 3.96086 2.58579 3.58579C2.96086 3.21071 3.46957 3 4 3H9L11 6H20C20.5304 6 21.0391 6.21071 21.4142 6.58579C21.7893 6.96086 22 7.46957 22 8V19Z" 
+                          stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                  </svg>
+                  Upload Folder
+                </Button>
+              </div>
               {uploadedFiles.length > 0 && (
                 <div className="uploaded-files-info">
-                  <p className="uploaded-count">{uploadedFiles.length} file(s) selected</p>
+                  <p className="uploaded-count">
+                    {uploadMode === 'folder' 
+                      ? `${uploadedFiles.length} file(s) selected from folder`
+                      : `${uploadedFiles.length} file(s) selected`}
+                  </p>
                   <Button
                     onClick={handleUploadAnalyze}
                     disabled={isAnalyzing}
@@ -259,7 +335,9 @@ const GitHubAnalyzer = () => {
                         Analyzing...
                       </>
                     ) : (
-                      'Analyze Uploaded Files'
+                      uploadMode === 'folder' 
+                        ? 'Analyze Folder'
+                        : 'Analyze Files'
                     )}
                   </Button>
                 </div>
