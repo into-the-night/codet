@@ -27,7 +27,7 @@ An intelligent code quality analysis tool with AI-powered insights and semantic 
 - Python 3.9+
 - Node.js 16+
 - [uv](https://docs.astral.sh/uv/) package manager
-- Local or [Cloud](https://redis.io/try-free/) Redis
+- [Local](https://redis.io/docs/latest/operate/oss_and_stack/install/archive/install-redis/) or [Cloud](https://redis.io/try-free/) Redis
 - Local or [Cloud](https://cloud.qdrant.io/) Qdrant (for Vector Embeddings only)
 
 ### Setup
