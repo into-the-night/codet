@@ -4,11 +4,12 @@ from pathlib import Path
 from typing import Optional
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from pydantic import Field
+from dotenv import load_dotenv
 
+load_dotenv()
 
 class Settings(BaseSettings):
     """Application settings loaded from environment variables"""
-
     # Gemini configuration (default cloud LLM)
     google_api_key: Optional[str] = Field(None, alias="GOOGLE_API_KEY")
     gemini_model: str = Field("gemini-2.5-flash", alias="GEMINI_MODEL")
@@ -30,6 +31,7 @@ class Settings(BaseSettings):
     use_memory: bool = Field(False, alias="USE_MEMORY")
     
     # Redis settings
+    redis_url: str = Field("redis://localhost:6379", alias="REDIS_URL")
     redis_host: str = Field("localhost", alias="REDIS_HOST")
     redis_port: int = Field(6379, alias="REDIS_PORT")
     redis_db: int = Field(0, alias="REDIS_DB")
@@ -108,6 +110,7 @@ class AgentConfig:
 class RedisConfig:
     """Compatibility wrapper for redis config"""
     def __init__(self, s: Settings):
+        self.redis_url = s.redis_url
         self.host = s.redis_host
         self.port = s.redis_port
         self.db = s.redis_db

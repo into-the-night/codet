@@ -1,5 +1,6 @@
 """Redis client wrapper for caching and message history"""
 
+import ssl
 import json
 import logging
 import asyncio
@@ -26,20 +27,52 @@ class RedisClient:
         """Establish connection to Redis"""
         try:
             # Create connection pool
-            self._pool = ConnectionPool(
-                host=self.config.host,
-                port=self.config.port,
-                db=self.config.db,
-                password=self.config.password,
-                decode_responses=self.config.decode_responses,
-                socket_connect_timeout=self.config.socket_connect_timeout,
-                socket_timeout=self.config.socket_timeout,
-                retry_on_timeout=self.config.retry_on_timeout,
-                max_connections=self.config.max_connections
-            )
+            if self.config.redis_url:
+                # Check if SSL is needed (common for cloud Redis providers)
+                use_ssl = (
+                    self.config.port == 28510 or  # Common Heroku Redis SSL port
+                    'heroku' in self.config.host.lower() or
+                    'amazonaws' in self.config.host.lower() or
+                    'redis.cloud' in self.config.host.lower()
+                )
+                pool_kwargs = {
+                    'host': self.config.host,
+                    'port': self.config.port,
+                    'db': self.config.db,
+                    'password': self.config.password,
+                    'decode_responses': self.config.decode_responses,
+                    'socket_connect_timeout': self.config.socket_connect_timeout,
+                    'socket_timeout': self.config.socket_timeout,
+                    'retry_on_timeout': self.config.retry_on_timeout,
+                    'max_connections': self.config.max_connections
+                }
+                # Add SSL configuration if needed
+                if use_ssl:
+                    pool_kwargs['connection_class'] = redis.SSLConnection
+                    pool_kwargs['ssl_cert_reqs'] = "none"
+                    logger.info("Using SSL connection for Redis")
+                                
+                # Create connection pool
+                self._pool = ConnectionPool(**pool_kwargs)
+
+                self._client = redis.StrictRedis(connection_pool=self._pool)
             
-            # Create Redis client
-            self._client = redis.Redis(connection_pool=self._pool)
+            else:
+                # Fall back to individual connection parameters
+                self._pool = ConnectionPool(
+                    host=self.config.host,
+                    port=self.config.port,
+                    db=self.config.db,
+                    password=self.config.password,
+                    decode_responses=self.config.decode_responses,
+                    socket_connect_timeout=self.config.socket_connect_timeout,
+                    socket_timeout=self.config.socket_timeout,
+                    retry_on_timeout=self.config.retry_on_timeout,
+                    max_connections=self.config.max_connections
+                )
+            
+                # Create Redis client
+                self._client = redis.Redis(connection_pool=self._pool)
             
             # Test connection
             await self._client.ping()
