@@ -77,7 +77,6 @@ File Priority:
 - Test files and documentation
 
 Tools:
-- AnalyzeFilesBatch(files): Analyze multiple files (3-5 optimal)
 - AnalyzeFile(file_path, analysis_focus): Single file analysis
 - QueryFile: Answer specific file questions"""
 
@@ -100,9 +99,8 @@ When a user asks about the codebase:
 4. Provide comprehensive answers with code details
 
 Tools:
-- AnalyzeFile: Deep analysis of a single file
-- AnalyzeFilesBatch: Analyze multiple files in parallel
-- QueryFile: Answer specific file questions"""
+- AnalyzeFile(file_path, analysis_focus): Deep analysis of a single file
+- QueryFile(file_path, question): Answer specific file questions"""
         
         # Add query_codebase to prompt if available
         if self.has_indexed_codebase:
@@ -197,16 +195,13 @@ Tools:
                 # Build function prompt based on available features
                 function_prompt = prompt + "\n\nIMPORTANT: You have access to these functions:\n"
                 function_prompt += "1. QueryFile(file_path, question) - answer a focused question about a single file\n"
+                function_prompt += "2. AnalyzeFile(file_path, analysis_focus) - deep code-quality analysis when necessary\n"
                 
                 if self.has_indexed_codebase:
                     function_prompt += "2. QueryCodebase(question) - search the indexed codebase to find patterns and answer cross-file questions\n"
-                    function_prompt += "3. AnalyzeFile(file_path, analysis_focus) - deep code-quality analysis when necessary\n"
-                    function_prompt += "4. AnalyzeFilesBatch(files) - analyze multiple files in parallel if needed\n\n"
-                    function_prompt += "Strategy: Use query_file for specific file questions, query_codebase for cross-file searches.\n"
+                    function_prompt += "Strategy: Use query_file for specific file questions, query_codebase for cross-file searches and AnalyzeFile to analyze files when necessary.\n"
                 else:
-                    function_prompt += "2. AnalyzeFile(file_path, analysis_focus) - deep code-quality analysis when necessary\n"
-                    function_prompt += "3. AnalyzeFilesBatch(files) - analyze multiple files in parallel if needed\n\n"
-                    function_prompt += "Strategy: Use query_file to answer specific questions about files.\n"
+                    function_prompt += "Strategy: Use query_file to answer specific questions about files and AnalyzeFile to analyze files when necessary.\n"
                 
                 if self.mode == "chat":
                     function_prompt += "Return the structured response with 'answer', 'files_to_analyze', and 'analysis_complete' fields when ready."
@@ -224,7 +219,6 @@ Tools:
                 # Build function declarations based on available features
                 function_declarations = [
                     AnalyzeFile,
-                    AnalyzeFilesBatch,
                     QueryFile
                 ]
                 
