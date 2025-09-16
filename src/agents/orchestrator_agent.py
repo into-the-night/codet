@@ -79,11 +79,11 @@ File Priority:
 Tools:
 - AnalyzeFilesBatch(files): Analyze multiple files (3-5 optimal)
 - AnalyzeFile(file_path, analysis_focus): Single file analysis
-- QueryFile: Answer specific file questions"""
+- QueryFile(file_path, question): Answer specific file questions"""
 
         # Add query_codebase if available
         if self.has_indexed_codebase:
-            prompt += "\n- QueryCode: Search across indexed codebase"
+            prompt += "\n- QueryCode(question, search_limit): Search across indexed codebase"
         
         prompt += '\n\nReturn {"issues": []} when analysis complete.'
         
@@ -100,13 +100,13 @@ When a user asks about the codebase:
 4. Provide comprehensive answers with code details
 
 Tools:
-- AnalyzeFile: Deep analysis of a single file
-- AnalyzeFilesBatch: Analyze multiple files in parallel
-- QueryFile: Answer specific file questions"""
+- AnalyzeFilesBatch(files): Analyze multiple files in parallel
+- AnalyzeFile(file_path, analysis_focus): Deep analysis of a single file
+- QueryFile(file_path, question): Answer specific file questions"""
         
         # Add query_codebase to prompt if available
         if self.has_indexed_codebase:
-            prompt += "\n- QueryCodebase: Search indexed codebase"
+            prompt += "\n- QueryCodebase(question, search_limit): Search indexed codebase"
         
         prompt += "\n\nUse tool-calling interface (not Python code). After analysis, provide comprehensive answers with specific code details."
         
@@ -197,15 +197,13 @@ Tools:
                 # Build function prompt based on available features
                 function_prompt = prompt + "\n\nIMPORTANT: You have access to these functions:\n"
                 function_prompt += "1. QueryFile(file_path, question) - answer a focused question about a single file\n"
+                function_prompt += "2. AnalyzeFile(file_path, analysis_focus) - deep code-quality analysis when necessary\n"
+                function_prompt += "3. AnalyzeFilesBatch(files) - analyze multiple files in parallel if needed\n\n"
                 
                 if self.has_indexed_codebase:
-                    function_prompt += "2. QueryCodebase(question) - search the indexed codebase to find patterns and answer cross-file questions\n"
-                    function_prompt += "3. AnalyzeFile(file_path, analysis_focus) - deep code-quality analysis when necessary\n"
-                    function_prompt += "4. AnalyzeFilesBatch(files) - analyze multiple files in parallel if needed\n\n"
+                    function_prompt += "4. QueryCodebase(question, search_limit) - search the indexed codebase to find patterns and answer cross-file questions\n"
                     function_prompt += "Strategy: Use query_file for specific file questions, query_codebase for cross-file searches.\n"
                 else:
-                    function_prompt += "2. AnalyzeFile(file_path, analysis_focus) - deep code-quality analysis when necessary\n"
-                    function_prompt += "3. AnalyzeFilesBatch(files) - analyze multiple files in parallel if needed\n\n"
                     function_prompt += "Strategy: Use query_file to answer specific questions about files.\n"
                 
                 if self.mode == "chat":
@@ -317,10 +315,10 @@ Tools:
 - Types: {list(stats['file_extensions'].keys())[:5]}
 
 STRUCTURE:
-{json.dumps(tree_data['tree'], indent=2)[:1500]}...
+{json.dumps(tree_data['tree'], indent=2)}...
 
 FILES:
-{self._format_file_list(all_files[:30])}
+{self._format_file_list(all_files)}
 
 Use analyze_files_batch or analyze_file to examine critical files (entry points, configs, core logic).
 After analysis, return: {{"issues": [Issues from the analysis with proper schema]}}"""
@@ -335,7 +333,7 @@ After analysis, return: {{"issues": [Issues from the analysis with proper schema
         prompt = f"""Analyzed: {len(self.analyzed_files)} files
 
 REMAINING:
-{self._format_file_list(remaining_files[:20])}
+{self._format_file_list(remaining_files)}
 
 Continue with supporting files, tests, and documentation.
 Use tools, then return: {{"issues": [...]}}"""
@@ -456,14 +454,14 @@ Repository: {root_path} ({stats['total_files']} files, {stats['total_size'] / (1
 Types: {list(stats['file_extensions'].keys())[:5]}
 
 FILES:
-{self._format_file_list(all_files[:30])}"""
+{self._format_file_list(all_files)}"""
 
         # Include existing analysis results if available
         if self._cached_analysis_result:
             issues_count = len(self._cached_analysis_result.issues)
             prompt += f"\n\nPrevious analysis: {issues_count} issues found"
 
-        prompt += "\n\nAnalyze relevant files if needed using the tools. Focus on files related to the question."""
+        prompt += "\n\nYou can query relevant files if needed using the tools. Focus on files related to the user's question ONLY. DO NOT ASSUME ANYTHING."""
         
         return prompt
     
@@ -476,7 +474,7 @@ FILES:
 Analyzed: {len(self.analyzed_files)} files
 
 REMAINING:
-{self._format_file_list(remaining_files[:20])}
+{self._format_file_list(remaining_files)}
 
 Analyze more files or return {{"issues": []}} if sufficient information gathered."""
         
@@ -507,7 +505,7 @@ Analyze more files or return {{"issues": []}} if sufficient information gathered
 USER QUESTION: "{question}"
 
 ANALYZED FILES: {len(self.analyzed_files)} files
-- {', '.join(list(self.analyzed_files)[:10])}{'...' if len(self.analyzed_files) > 10 else ''}
+- {', '.join(list(self.analyzed_files))}
 
 ANALYSIS RESULTS: {len(issues)} pieces of information gathered
 

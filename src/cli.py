@@ -155,7 +155,7 @@ def analyze(path, output, format, config, use_local, ollama_model, index, collec
                 collection = Path.cwd().name  # Use current directory name
             else:
                 collection = path
-        collection = collection.replace('.', '_').replace('/', '_').replace('\\', '_')
+        collection = Path(str(collection).replace('.', '_').replace('/', '_').replace('\\', '_'))
         info_text += f"\n[bold cyan]🔍 RAG Mode:[/bold cyan] Enabled (Collection: {collection})"
     
     console.print(Panel.fit(
