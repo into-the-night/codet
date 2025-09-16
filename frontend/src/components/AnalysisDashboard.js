@@ -179,13 +179,6 @@ const AnalysisDashboard = () => {
 
   const githubRepo = extractGithubRepo();
 
-  // Debug logging
-  console.log('Analysis Data:', analysisData);
-  console.log('Summary:', summary);
-  console.log('GitHub URL from summary:', summary?.github_url);
-  console.log('Project Path:', summary?.project_path);
-  console.log('Extracted GitHub Repo:', githubRepo);
-
   return (
     <div className="analysis-dashboard">
       <div className="container">

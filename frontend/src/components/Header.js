@@ -19,15 +19,6 @@ const Header = () => {
             </div>
             <span className="logo-text">codet</span>
           </Link>
-          
-          <nav className="nav">
-            <Link 
-              to="/" 
-              className={`nav-link ${location.pathname === '/' ? 'active' : ''}`}
-            >
-              Analyze
-            </Link>
-          </nav>
         </div>
       </div>
     </header>
