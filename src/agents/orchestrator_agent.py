@@ -26,6 +26,7 @@ class OrchestratorAgent(BaseAgent):
         mode: str = "analysis",
         custom_system_prompt: Optional[str] = None,
         has_indexed_codebase: bool = False,
+        session_id: Optional[str] = None
         ):
         super().__init__(config, redis_config)
         self.analysis_results = []  # Store results from each analysis iteration
@@ -38,7 +39,7 @@ class OrchestratorAgent(BaseAgent):
         self.user_question = None  # Store user question for chat mode
         self.chat_answer = None  # Store final answer for chat mode
         self._cached_analysis_result = None  # Store cached analysis for chat mode
-        self.session_id = None  # Store message key for chat mode
+        self.session_id = session_id  # Store message key for chat mode
 
         # Function handlers - will be set by the analysis engine
         self.function_handlers = {}
@@ -246,8 +247,8 @@ After analyzing relevant files, provide a comprehensive answer that directly add
         
         if self.mode == "chat" and user_question:
             prompt = self._build_chat_prompt(user_question, tree_data, root_path)
+            await self.initialize_redis()
             if self.session_id is None:
-                await self.initialize_redis()
                 self.session_id = await self.message_history_manager.create_session(agent_name=self.agent_name)
             else:
                 message_history = await self.message_history_manager.get_recent_messages(session_id=self.session_id, count=5)

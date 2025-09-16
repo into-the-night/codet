@@ -27,7 +27,6 @@ class Message:
     """Individual message in conversation history"""
     role: MessageRole
     content: str
-    timestamp: Optional[datetime] = None
     message_id: Optional[str] = None
     metadata: Optional[Dict[str, Any]] = None
     
@@ -44,7 +43,6 @@ class Message:
         return cls(
             role=MessageRole(data['role']),
             content=data['content'],
-            timestamp=datetime.fromisoformat(data['timestamp']),
             message_id=data['message_id'],
             metadata=data.get('metadata')
         )
@@ -159,7 +157,6 @@ class MessageHistoryManager:
                     message_data = json.loads(message_json)
                     messages.append(Message.from_dict(message_data))
                 except (json.JSONDecodeError, KeyError) as e:
-                    logger.warning(f"Failed to parse message: {e}")
                     continue
             
             return messages
