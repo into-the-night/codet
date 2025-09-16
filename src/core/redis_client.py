@@ -26,17 +26,29 @@ class RedisClient:
         """Establish connection to Redis"""
         try:
             # Create connection pool
-            self._pool = ConnectionPool(
-                host=self.config.host,
-                port=self.config.port,
-                db=self.config.db,
-                password=self.config.password,
-                decode_responses=self.config.decode_responses,
-                socket_connect_timeout=self.config.socket_connect_timeout,
-                socket_timeout=self.config.socket_timeout,
-                retry_on_timeout=self.config.retry_on_timeout,
-                max_connections=self.config.max_connections
-            )
+            if self.config.redis_url:
+                # Use Redis URL if available (e.g. from Heroku)
+                self._pool = ConnectionPool.from_url(
+                    self.config.redis_url,
+                    decode_responses=self.config.decode_responses,
+                    socket_connect_timeout=self.config.socket_connect_timeout,
+                    socket_timeout=self.config.socket_timeout,
+                    retry_on_timeout=self.config.retry_on_timeout,
+                    max_connections=self.config.max_connections
+                )
+            else:
+                # Fall back to individual connection parameters
+                self._pool = ConnectionPool(
+                    host=self.config.host,
+                    port=self.config.port,
+                    db=self.config.db,
+                    password=self.config.password,
+                    decode_responses=self.config.decode_responses,
+                    socket_connect_timeout=self.config.socket_connect_timeout,
+                    socket_timeout=self.config.socket_timeout,
+                    retry_on_timeout=self.config.retry_on_timeout,
+                    max_connections=self.config.max_connections
+                )
             
             # Create Redis client
             self._client = redis.Redis(connection_pool=self._pool)

@@ -30,6 +30,7 @@ class Settings(BaseSettings):
     use_memory: bool = Field(False, alias="USE_MEMORY")
     
     # Redis settings
+    redis_url: Optional[str] = Field(None, alias="REDIS_URL")
     redis_host: str = Field("localhost", alias="REDIS_HOST")
     redis_port: int = Field(6379, alias="REDIS_PORT")
     redis_db: int = Field(0, alias="REDIS_DB")
