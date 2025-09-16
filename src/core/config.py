@@ -109,6 +109,7 @@ class AgentConfig:
 class RedisConfig:
     """Compatibility wrapper for redis config"""
     def __init__(self, s: Settings):
+        self.redis_url = s.redis_url
         self.host = s.redis_host
         self.port = s.redis_port
         self.db = s.redis_db
