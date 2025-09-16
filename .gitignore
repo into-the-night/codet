@@ -60,9 +60,6 @@ data/cache/
 data/sample_projects/*
 !data/sample_projects/.gitkeep
 
-# Reports
-*.html
-*.json
 
 # Environment variables
 .env
