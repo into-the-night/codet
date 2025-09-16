@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import axios from 'axios';
+import api, { askQuestion } from '../services/api';
 import './AnalysisDashboard.css';
 import IssueCard from './IssueCard';
 import MetricCard from './MetricCard';
@@ -19,6 +19,7 @@ const AnalysisDashboard = () => {
   const [messages, setMessages] = useState([]);
   const [inputValue, setInputValue] = useState('');
   const [isLoadingChat, setIsLoadingChat] = useState(false);
+  const [sessionId, setSessionId] = useState(null);
   const messagesEndRef = useRef(null);
 
   useEffect(() => {
@@ -31,7 +32,7 @@ const AnalysisDashboard = () => {
 
   const fetchAnalysisData = async () => {
     try {
-      const response = await axios.get(`/api/report/${analysisId}`);
+      const response = await api.get(`/api/report/${analysisId}`);
       setAnalysisData(response.data);
     } catch (err) {
       setError(err.response?.data?.detail || 'Failed to load analysis results');
@@ -83,24 +84,30 @@ const AnalysisDashboard = () => {
     setIsLoadingChat(true);
 
     try {
-      const response = await axios.post(`/api/ask/${analysisId}`, {
-        question: inputValue
-      });
+      const response = await askQuestion(analysisId, inputValue, sessionId);
+
+      // Save the session ID from the response
+      if (response.session_id) {
+        setSessionId(response.session_id);
+      }
 
       const aiMessage = {
         id: Date.now() + 1,
         type: 'ai',
-        content: response.data.answer,
-        timestamp: response.data.timestamp
+        content: response.answer,
+        timestamp: response.timestamp,
+        session_id: response.session_id
       };
 
       setMessages(prev => [...prev, aiMessage]);
     } catch (err) {
+      console.error('Chat error:', err);
       const errorMessage = {
         id: Date.now() + 1,
         type: 'error',
-        content: err.response?.data?.detail || 'Failed to get response from the AI',
-        timestamp: new Date().toISOString()
+        content: err.response?.data?.detail || err.message || 'Failed to get response from the AI',
+        timestamp: new Date().toISOString(),
+        session_id: null
       };
       setMessages(prev => [...prev, errorMessage]);
     } finally {

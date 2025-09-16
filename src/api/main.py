@@ -289,7 +289,7 @@ async def analyze_github_repository(request: GitHubAnalysisRequest):
 
 
 @app.post("/api/ask/{analysis_id}")
-async def ask_question(analysis_id: str, question: CodebaseQuestion):
+async def ask_question(analysis_id: str, question: CodebaseQuestion, session_id: Optional[str] = None):
     """Ask a question about the analyzed codebase"""
     try:
         if not redis_client:
@@ -305,12 +305,14 @@ async def ask_question(analysis_id: str, question: CodebaseQuestion):
             return {
                 "question": question.question,
                 "answer": "Oops! I lost the files. Please analyze again.",
-                "timestamp": datetime.now().isoformat()
+                "timestamp": datetime.now().isoformat(),
+                "session_id": session_id
             }
         
         chat_engine = OrchestratorEngine(
             mode="chat",
-            has_indexed_codebase=result.summary.get('indexed', False)
+            has_indexed_codebase=result.summary.get('indexed', False),
+            session_id=session_id
         )
         
         chat_engine.set_cached_analysis(result)
@@ -324,7 +326,8 @@ async def ask_question(analysis_id: str, question: CodebaseQuestion):
         return {
             "question": question.question,
             "answer": answer,
-            "timestamp": datetime.now().isoformat()
+            "timestamp": datetime.now().isoformat(),
+            "session_id": chat_engine.session_id
         }
         
     except HTTPException:

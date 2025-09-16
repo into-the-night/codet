@@ -84,7 +84,6 @@ class BaseAgent:
         try:
             self.redis_client = await get_redis_client(self.redis_config)
             self.message_history_manager = MessageHistoryManager(self.redis_client, self.redis_config)
-            print("Redis initialized successfully")
             return True
         except Exception as e:
             logger.error(f"Failed to initialize Redis: {e}")

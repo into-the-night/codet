@@ -22,6 +22,13 @@ export const getAnalysisResults = async (analysisId) => {
   return response.data;
 };
 
+export const askQuestion = async (analysisId, question, sessionId = null) => {
+    const response = await api.post(`/api/ask/${analysisId}`, {
+      question,
+      session_id: sessionId
+  });
+  return response.data;
+};
 
 // Codebase indexing API functions
 export const indexCodebase = async (path, collectionName = 'codebase', batchSize = 100) => {

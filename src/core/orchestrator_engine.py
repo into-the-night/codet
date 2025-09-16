@@ -21,13 +21,14 @@ class OrchestratorEngine:
     """Main orchestrator engine that coordinates the analysis flow"""
     
     def __init__(self, config: Optional[Config] = None, mode: str = "analysis", 
-                 has_indexed_codebase: bool = False, collection_name: Optional[str] = None):
+                has_indexed_codebase: bool = False, collection_name: Optional[str] = None, session_id: Optional[str] = None):
         self.config = config or Config.load()
         self.mode = mode  # 'analysis' or 'chat'
         self.has_indexed_codebase = has_indexed_codebase
         self.collection_name = collection_name or "codebase"
         self.tree_constructor = RepositoryTreeConstructor()
         self.report_generator = ReportGenerator()
+        self.session_id = session_id
         
         # Initialize agents
         self.orchestrator_agent = None
@@ -56,6 +57,7 @@ class OrchestratorEngine:
                 mode=self.mode,
                 custom_system_prompt=custom_system_prompt,
                 has_indexed_codebase=self.has_indexed_codebase,
+                session_id=self.session_id
             )
             self.file_analysis_agent = FileAnalysisAgent(full_config.agent)
             
