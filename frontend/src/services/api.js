@@ -22,6 +22,11 @@ export const getAnalysisResults = async (analysisId) => {
   return response.data;
 };
 
+export const getJobStatus = async (jobId) => {
+  const response = await api.get(`/api/job/${jobId}`);
+  return response.data;
+};
+
 export const askQuestion = async (analysisId, question, sessionId = null) => {
     const response = await api.post(`/api/ask/${analysisId}`, {
       question,

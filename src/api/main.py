@@ -19,6 +19,7 @@ from ..core.analysis_engine import AnalysisEngine
 from ..core.orchestrator_engine import OrchestratorEngine
 from ..core.config import settings, RedisConfig
 from ..core.redis_client import get_redis_client, close_redis_client
+from ..core.job_queue import JobQueue, JobStatus
 from .models import (
     AnalysisRequest, 
     GitHubAnalysisRequest,
@@ -142,68 +143,27 @@ async def analyze_repository(request: AnalysisRequest):
         if not request.enable_ai:
             raise HTTPException(status_code=400, detail="AI analysis is required")
         
-
-        ######## TURNED OFF INDEXING FOR DEPLOYMENT ########
-
-        # Check repository size to determine if indexing is needed
-        # size_check = check_repository_size(str(path))
-        # # Auto-index if the codebase is too large
-        # if size_check['needs_indexing']:
-        #     try:
-        #         logger.info(f"Auto-indexing large codebase: {size_check['reason']}")
-        #         # Index the codebase for better performance
-        #         chunks = parser.parse_directory(str(path))
-        #         indexer = QdrantCodebaseIndexer(
-        #             collection_name=f"upload_{uuid.uuid4().hex[:8]}",
-        #             qdrant_url=settings.qdrant_url,
-        #             qdrant_api_key=settings.qdrant_api_key,
-        #             use_memory=settings.use_memory
-        #         )
-        #         indexer.index_chunks(chunks, batch_size=100)
-        #         index_result = indexer.get_statistics()
-        #         logger.info(f"Indexed {index_result['total_chunks']} chunks")
-        #         index = True
-        #     except:
-        #         logger.error(f"Failed to index codebase:")
-        #         index = False
-        # else:
-        #     index = False
-
-        # Use AI analysis engine
-        engine = AnalysisEngine()
-        config_path = Path(request.config_path) if hasattr(request, 'config_path') and request.config_path else None
-        engine.enable_analysis(config_path, has_indexed_codebase=False)
-
-        # Run async analysis
-        result = await engine.analyze_repository(path)
-        result.summary['temp_dir'] = str(path)
-        result.summary['indexed'] = False
-
-        # Cache the result in Redis
-        if redis_client:
-            await redis_client.set_cache(f"analysis:{analysis_id}", serialize_analysis_result(result), ttl=3600)  # 1 hour TTL
-        else:
-            logger.warning("Redis client not available, skipping cache")
+        # Initialize job queue
+        job_queue = JobQueue(redis_client)
         
-        # Count AI-detected issues
-        ai_issues_count = len([i for i in result.issues if i.metadata and i.metadata.get('ai_detected')])
+        # Create job data
+        job_data = {
+            "path": str(path),
+            "config_path": request.config_path if hasattr(request, 'config_path') else None
+        }
         
-        # Create response
-        response_data = AnalysisResponse(
+        # Enqueue job
+        await job_queue.enqueue_job("local_analysis", job_data, analysis_id)
+        
+        # Return immediate response with job ID
+        return AnalysisResponse(
             analysis_id=analysis_id,
-            status="completed",
-            summary=result.summary,
-            issues_count=len(result.issues),
-            quality_score=result.summary.get('quality_score', 0),
-            timestamp=result.timestamp
+            status="pending",
+            summary={"path": str(path)},
+            issues_count=0,
+            quality_score=0,
+            timestamp=datetime.now().isoformat()
         )
-        
-        # Add AI analysis info to summary
-        if ai_issues_count > 0:
-            response_data.summary['ai_issues_count'] = ai_issues_count
-            response_data.summary['ai_enabled'] = True
-
-        return response_data
         
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -243,7 +203,6 @@ async def upload_files(
 @app.post("/api/analyze-github", response_model=AnalysisResponse)
 async def analyze_github_repository(request: GitHubAnalysisRequest):
     """Clone and analyze a GitHub repository"""
-    import subprocess
     import re
     
     try:
@@ -253,37 +212,30 @@ async def analyze_github_repository(request: GitHubAnalysisRequest):
         if not re.match(github_pattern, request.github_url):
             raise HTTPException(status_code=400, detail="Invalid GitHub repository URL")
         
-        # Create temporary directory for cloning
-        temp_dir = Path(tempfile.mkdtemp(prefix="codet_github_"))
-        temp_directories.add(str(temp_dir))  # Track for cleanup
+        # Generate unique analysis ID
+        analysis_id = str(uuid.uuid4())
         
-        try:
-            clone_result = subprocess.run(
-                ['git', 'clone', request.github_url, str(temp_dir)],
-                capture_output=True,
-                text=True,
-                timeout=300  # 5 minute timeout
-            )
-            
-            if clone_result.returncode != 0:
-                raise HTTPException(
-                    status_code=400, 
-                    detail=f"Failed to clone repository: {clone_result.stderr}"
-                )
-            
-            request = AnalysisRequest(path=str(temp_dir))
-            response = await analyze_repository(request)
-            
-            if redis_client:
-                cached_data = await redis_client.get_cache(f"analysis:{response.analysis_id}")
-                if cached_data:
-                    result = deserialize_analysis_result(cached_data)
-                    result.summary['github_url'] = github_url
-                    await redis_client.set_cache(f"analysis:{response.analysis_id}", serialize_analysis_result(result), ttl=3600)
-
-            return response
-        except Exception as e:
-            raise HTTPException(status_code=500, detail=str(e))
+        # Initialize job queue
+        job_queue = JobQueue(redis_client)
+        
+        # Create job data
+        job_data = {
+            "github_url": request.github_url
+        }
+        
+        # Enqueue job
+        await job_queue.enqueue_job("github_analysis", job_data, analysis_id)
+        
+        # Return immediate response with job ID
+        return AnalysisResponse(
+            analysis_id=analysis_id,
+            status="pending",
+            summary={"github_url": github_url},
+            issues_count=0,
+            quality_score=0,
+            timestamp=datetime.now().isoformat()
+        )
+        
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -299,35 +251,29 @@ async def ask_question(analysis_id: str, question: CodebaseQuestion, session_id:
         if not cached_data:
             raise HTTPException(status_code=404, detail="Analysis not found")
         
-        result = deserialize_analysis_result(cached_data)
-        path = Path(result.summary.get('temp_dir'))
-        if not path.exists(): # If the API is restarted and has deleted the temp files
-            return {
-                "question": question.question,
-                "answer": "Oops! I lost the files. Please analyze again.",
-                "timestamp": datetime.now().isoformat(),
-                "session_id": session_id
-            }
+        # Generate unique job ID
+        job_id = str(uuid.uuid4())
         
-        chat_engine = OrchestratorEngine(
-            mode="chat",
-            has_indexed_codebase=result.summary.get('indexed', False),
-            session_id=session_id
-        )
+        # Initialize job queue
+        job_queue = JobQueue(redis_client)
         
-        chat_engine.set_cached_analysis(result)
-        chat_engine.initialize_agents()
-
-        answer = await chat_engine.answer_question(
-            question=question.question,
-            path=path
-        )
-        
-        return {
+        # Create job data
+        job_data = {
+            "analysis_id": analysis_id,
             "question": question.question,
-            "answer": answer,
-            "timestamp": datetime.now().isoformat(),
-            "session_id": chat_engine.session_id
+            "session_id": session_id,
+            "cached_analysis": cached_data  # Pass the cached analysis to avoid re-fetching
+        }
+        
+        # Enqueue job
+        await job_queue.enqueue_job("chat", job_data, job_id)
+        
+        # Return immediate response with job ID
+        return {
+            "job_id": job_id,
+            "status": "pending",
+            "question": question.question,
+            "timestamp": datetime.now().isoformat()
         }
         
     except HTTPException:
@@ -374,6 +320,43 @@ async def get_report(analysis_id: str, format: str = "json"):
         else:
             raise HTTPException(status_code=400, detail=f"Unsupported format: {format}")
             
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/job/{job_id}")
+async def get_job_status(job_id: str):
+    """Get the status of a background job"""
+    try:
+        if not redis_client:
+            raise HTTPException(status_code=503, detail="Redis client not available")
+        
+        job_queue = JobQueue(redis_client)
+        job_status = await job_queue.get_job_status(job_id)
+        
+        if not job_status:
+            raise HTTPException(status_code=404, detail="Job not found")
+        
+        # If job is completed, get the result
+        if job_status["status"] == JobStatus.COMPLETED.value:
+            result = await job_queue.get_job_result(job_id)
+            if result:
+                return {
+                    "status": job_status["status"],
+                    "result": result,
+                    "created_at": job_status["created_at"],
+                    "updated_at": job_status["updated_at"]
+                }
+        
+        # For non-completed jobs, just return the status
+        return {
+            "status": job_status["status"],
+            "created_at": job_status["created_at"],
+            "updated_at": job_status["updated_at"]
+        }
+        
     except HTTPException:
         raise
     except Exception as e:

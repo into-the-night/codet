@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import api, { askQuestion } from '../services/api';
+import api, { askQuestion, getJobStatus } from '../services/api';
 import './AnalysisDashboard.css';
 import IssueCard from './IssueCard';
 import MetricCard from './MetricCard';
@@ -23,7 +23,18 @@ const AnalysisDashboard = () => {
   const messagesEndRef = useRef(null);
 
   useEffect(() => {
+    let pollTimeout;
+    const pollData = async () => {
+      pollTimeout = setTimeout(fetchAnalysisData, 5000);
+    };
+
     fetchAnalysisData();
+
+    return () => {
+      if (pollTimeout) {
+        clearTimeout(pollTimeout);
+      }
+    };
   }, [analysisId]); // eslint-disable-line react-hooks/exhaustive-deps
   
   useEffect(() => {
@@ -32,12 +43,35 @@ const AnalysisDashboard = () => {
 
   const fetchAnalysisData = async () => {
     try {
-      const response = await api.get(`/api/report/${analysisId}`);
-      setAnalysisData(response.data);
+      // First try to get job status
+      const jobStatus = await getJobStatus(analysisId);
+      
+      if (jobStatus.status === 'completed') {
+        // If job is completed, get the full report
+        setAnalysisData(jobStatus.result);
+        setLoading(false);
+      } else if (jobStatus.status === 'failed') {
+        setError('Analysis failed. Please try again.');
+        setLoading(false);
+      } else if (jobStatus.status === 'pending' || jobStatus.status === 'processing') {
+        // If job is still running, poll every 5 seconds
+        setTimeout(fetchAnalysisData, 5000);
+      }
     } catch (err) {
-      setError(err.response?.data?.detail || 'Failed to load analysis results');
-    } finally {
-      setLoading(false);
+      if (err.response?.status === 404) {
+        // If job not found, try getting the report directly (for backward compatibility)
+        try {
+          const response = await api.get(`/api/report/${analysisId}`);
+          setAnalysisData(response.data);
+          setLoading(false);
+        } catch (reportErr) {
+          setError(reportErr.response?.data?.detail || 'Failed to load analysis results');
+          setLoading(false);
+        }
+      } else {
+        setError(err.response?.data?.detail || 'Failed to load analysis results');
+        setLoading(false);
+      }
     }
   };
 
@@ -68,6 +102,23 @@ const AnalysisDashboard = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   };
   
+  const pollJobStatus = async (jobId) => {
+    try {
+      const result = await getJobStatus(jobId);
+      if (result.status === 'completed') {
+        return result;
+      } else if (result.status === 'failed') {
+        throw new Error(result.error || 'Job failed');
+      } else {
+        // Still processing, wait and try again
+        await new Promise(resolve => setTimeout(resolve, 2000));
+        return await pollJobStatus(jobId);
+      }
+    } catch (err) {
+      throw err;
+    }
+  };
+
   const handleSubmit = async (e) => {
     e.preventDefault();
     if (!inputValue.trim() || !analysisId) return;
@@ -84,19 +135,24 @@ const AnalysisDashboard = () => {
     setIsLoadingChat(true);
 
     try {
-      const response = await askQuestion(analysisId, inputValue, sessionId);
+      // Submit the question and get job ID
+      const jobResponse = await askQuestion(analysisId, inputValue, sessionId);
+      
+      // Poll for job completion
+      const jobResult = await pollJobStatus(jobResponse.job_id);
+      const result = jobResult.result;  // Get the nested result
 
       // Save the session ID from the response
-      if (response.session_id) {
-        setSessionId(response.session_id);
+      if (result.session_id) {
+        setSessionId(result.session_id);
       }
 
       const aiMessage = {
         id: Date.now() + 1,
         type: 'ai',
-        content: response.answer,
-        timestamp: response.timestamp,
-        session_id: response.session_id
+        content: result.answer,
+        timestamp: result.timestamp,
+        session_id: result.session_id
       };
 
       setMessages(prev => [...prev, aiMessage]);

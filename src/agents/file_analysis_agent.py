@@ -268,11 +268,11 @@ Provide your analysis in the structured JSON format with detailed issue descript
         context_info = ""
         if repository_context:
             context_info = f"""
-REPOSITORY CONTEXT:
-- Total files: {repository_context.get('total_files', 'Unknown')}
-- Main languages: {', '.join(repository_context.get('main_languages', []))}
-- Project type: {repository_context.get('project_type', 'Unknown')}
-"""
+                REPOSITORY CONTEXT:
+                - Total files: {repository_context.get('total_files', 'Unknown')}
+                - Main languages: {', '.join(repository_context.get('main_languages', []))}
+                - Project type: {repository_context.get('project_type', 'Unknown')}
+                """
 
         truncated_note = "\n\n[Note: File content truncated to first " + str(self.max_lines) + " lines]" if truncated else ""
 
