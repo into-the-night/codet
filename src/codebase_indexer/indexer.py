@@ -44,7 +44,6 @@ class QdrantCodebaseIndexer:
             )
         
         # Initialize embedding models
-        print("Loading embedding models...")
         self.nlp_model = SentenceTransformer('sentence-transformers/all-MiniLM-L6-v2')
         self.code_model = SentenceTransformer('jinaai/jina-embeddings-v2-base-code')
         
@@ -62,15 +61,10 @@ class QdrantCodebaseIndexer:
             collection_exists = any(col.name == self.collection_name for col in collections)
             
             if collection_exists:
-                print(f"Collection '{self.collection_name}' already exists")
                 # Check if the existing collection has the correct vector configuration
                 try:
                     self.client.get_collection(self.collection_name)
-                    # If we can get the collection info, it's valid, so we'll use it
-                    print(f"Using existing collection '{self.collection_name}'")
                 except Exception:
-                    # If we can't get collection info, try to recreate it
-                    print(f"Existing collection '{self.collection_name}' appears corrupted, recreating...")
                     self.client.delete_collection(self.collection_name)
                     collection_exists = False
             
@@ -83,13 +77,11 @@ class QdrantCodebaseIndexer:
                         "code": VectorParams(size=self.code_dim, distance=Distance.COSINE),
                     }
                 )
-                print(f"Created collection '{self.collection_name}'")
         except Exception as e:
             print(f"Error creating collection: {e}")
     
     def index_chunks(self, chunks: List[CodeChunk], batch_size: int = 32):
         """Index code chunks into Qdrant"""
-        print(f"Indexing {len(chunks)} chunks...")
         
         for i in range(0, len(chunks), batch_size):
             batch = chunks[i:i + batch_size]
@@ -136,10 +128,6 @@ class QdrantCodebaseIndexer:
                 batch_size=batch_size,
                 wait=True
             )
-            
-            print(f"Indexed batch {i//batch_size + 1}/{(len(chunks) + batch_size - 1)//batch_size}")
-        
-        print(f"Successfully indexed {len(chunks)} chunks")
     
     def search_nlp(self, query: str, limit: int = 10, filter_dict: Optional[Dict] = None) -> List[Dict[str, Any]]:
         """Search using natural language query"""

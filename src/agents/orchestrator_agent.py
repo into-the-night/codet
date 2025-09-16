@@ -63,125 +63,52 @@ class OrchestratorAgent(BaseAgent):
     
     def _get_analysis_system_prompt(self) -> str:
         """Default system prompt for analysis mode"""
-        prompt = """You are the main orchestrator for a comprehensive code analysis system. Your role is to strategically select which files to analyze and coordinate the analysis process.
+        prompt = """You are the main orchestrator for code analysis. Strategically select and analyze files using the provided tools.
 
-CRITICAL: Your workflow MUST be:
-1. Use the tools through the system's tool-calling mechanism (NOT by writing Python code)
-2. Wait for and process the tool results
-3. Only then return {"issues": [...]} with compiled findings
+WORKFLOW:
+1. Use tools through the system's tool-calling interface (NOT Python code)
+2. Wait for tool results
+3. Return {"issues": [...]} with findings
 
-IMPORTANT: DO NOT write Python code like self.analyze_file() or function calls. The system provides these as tools that you invoke through the tool-calling interface.
+File Priority:
+- Entry points (main.py, index.js, app.py)
+- Core logic and configuration files
+- Large/complex files
+- Test files and documentation
 
-Your responsibilities:
-1. **Strategic File Selection**: Choose the most important files to analyze based on:
-   - Main entry points (main.py, index.js, app.py, etc.)
-   - Core business logic files
-   - Configuration files (config.py, package.json, requirements.txt, etc.)
-   - Test files and test configuration
-   - Documentation files
-   - Files with high complexity or large size
-   - Files that haven't been analyzed yet
-
-2. **Analysis Coordination**: Use the analyze_file or analyze_files_batch tools to delegate file analysis to specialized agents. Prefer analyze_files_batch for better performance when analyzing multiple files.
-
-3. **Iterative Process**: Continue selecting and analyzing files until you have comprehensive coverage of the codebase
-
-4. **Quality Focus**: Prioritize files that are likely to contain:
-   - Security vulnerabilities
-   - Performance bottlenecks
-   - Maintainability and design issues
-   - Code quality problems
-   - Missing tests or documentation
-
-Analysis Process:
-1. **First Pass**: Start with the most critical files (entry points, core logic, config)
-2. **Second Pass**: Analyze supporting files, utilities, and helpers
-3. **Third Pass**: Review test files and documentation
-4. **Final Pass**: Check for any remaining important files
-
-To analyze files efficiently:
-- Use analyze_files_batch when analyzing multiple files (RECOMMENDED for performance)
-- Use analyze_file for single file analysis
-- Try to batch 3-5 files together for optimal performance
-
-For analyze_files_batch:
-- files: Array of file objects with file_path and optional analysis_focus
-
-For analyze_file:
-- file_path: The relative path to the file
-- analysis_focus: Specific area to focus on (optional)
-
-IMPORTANT - Valid Issue Categories:
-When issues are found, they must be categorized using ONLY these categories:
-- security: Security vulnerabilities and risks
-- performance: Performance bottlenecks and optimization opportunities
-- duplication: Code duplication and DRY violations
-- complexity: Complex code that's hard to understand or maintain
-- testing: Missing tests or testing issues
-- documentation: Missing or poor documentation
-- style: Code style and formatting issues
-- maintainability: Design issues, architectural concerns, coupling, and cohesion problems
-
-IMPORTANT: You MUST use the provided tools to analyze files. DO NOT return file lists in your response.
-- Use analyze_file or analyze_files_batch tools to request file analysis (through the tool-calling interface, NOT Python code)
-- Use QueryFile to answer specific questions about files"""
+Tools:
+- AnalyzeFilesBatch(files): Analyze multiple files (3-5 optimal)
+- AnalyzeFile(file_path, analysis_focus): Single file analysis
+- QueryFile: Answer specific file questions"""
 
         # Add query_codebase if available
         if self.has_indexed_codebase:
-            prompt += "\n- Use query_codebase to search and answer questions across the entire indexed codebase"
+            prompt += "\n- QueryCode: Search across indexed codebase"
         
-        prompt += "\n- Only after receiving analysis results, compile and return issues in the structured format"
+        prompt += '\n\nReturn {"issues": []} when analysis complete.'
         
-        return prompt + """
-
-If no files need to be analyzed or you've completed analysis, return an empty issues list:
-{"issues": []}
-
-Example of CORRECT behavior:
-1. Call analyze_files_batch([{"file_path": "main.py"}, {"file_path": "config.py"}])
-2. Return: {"issues": [... issues from analysis ...]}
-
-Example of INCORRECT behavior:
-1. Return: {"files_to_analyze": [{"file_path": "main.py"}]}  # WRONG - use functions!"""
+        return prompt
     
     def _get_chat_system_prompt(self) -> str:
         """System prompt for chat mode"""
-        prompt = """You are a helpful AI assistant specialized in understanding and answering questions about codebases. Your role is to analyze code files and provide comprehensive answers to user questions.
+        prompt = """You are an AI assistant specialized in answering questions about codebases.
 
-Your capabilities:
-1. **Code Analysis**: Analyze files to understand their structure, functionality, and purpose
-2. **Question Answering**: Answer questions about code architecture, functionality, dependencies, and implementation details
-3. **Context Understanding**: Build a comprehensive understanding of the codebase through strategic file analysis
-4. **Intelligent File Selection**: Choose the most relevant files to analyze based on the user's question
+When a user asks about the codebase:
+1. Analyze only if needed (skip for greetings or unrelated questions)
+2. Choose relevant files to examine
+3. Use tools to analyze files
+4. Provide comprehensive answers with code details
 
-When a user asks a question:
-1. **Understand the Question**: Identify what the user wants to know about the codebase. You don't need to analyze the codebase for simple questions or remarks, such as Hi, Hello, Thank you, or questions unrelated to the codebase.
-2. **Strategic File Selection**: Decide if you need to analyze this codebase and if so, choose the files that are most likely to contain relevant information related to the question.
-3. **Analyze Files**: Use the AnalyzeFile or AnalyzeFilesBatch or QueryFile function to examine relevant files
-4. **Provide Comprehensive Answer**: Synthesize information from analyzed files to answer the question
-
-IMPORTANT: You have access to the following tools/functions:
-- AnalyzeFile: To analyze a specific file
-- AnalyzeFilesBatch: To analyze multiple files in parallel
-- QueryFile: To answer specific questions about a file (like "how many functions does this file have?" or "do these functions have tests?")"""
+Tools:
+- AnalyzeFile: Deep analysis of a single file
+- AnalyzeFilesBatch: Analyze multiple files in parallel
+- QueryFile: Answer specific file questions"""
         
         # Add query_codebase to prompt if available
         if self.has_indexed_codebase:
-            prompt += "\n- QueryCodebase: To search the indexed codebase and answer questions using semantic search"
+            prompt += "\n- QueryCodebase: Search indexed codebase"
         
-        prompt += """
-
-To use these tools, you MUST use the tool-calling mechanism provided by the system. DO NOT write Python code or function calls like self.analyze_file(). Instead, the system will automatically detect when you want to use a tool based on your response format.
-
-When you need to analyze a file:
-- Simply indicate that you want to use the AnalyzeFile function
-- Provide the required parameters:
-  - file_path: The relative path to the file
-  - analysis_focus: Specific area to focus on based on the user's question (optional)
-
-The system will handle the actual function execution and provide you with the results.
-
-After analyzing relevant files, provide a comprehensive answer that directly addresses the user's question. Include specific details from the analyzed code when relevant."""
+        prompt += "\n\nUse tool-calling interface (not Python code). After analysis, provide comprehensive answers with specific code details."
         
         return prompt
 
@@ -383,81 +310,35 @@ After analyzing relevant files, provide a comprehensive answer that directly add
     def _build_orchestration_prompt(self, tree_data: Dict[str, Any], root_path: Path) -> str:
         """Build the initial orchestration prompt"""
         stats = tree_data['statistics']
-        
-        # Get list of all files for reference
         all_files = self._get_file_list_from_tree(tree_data)
         
-        prompt = f"""You are analyzing a software repository for code quality, security, performance, and maintainability issues.
+        prompt = f"""Analyzing repository: {root_path}
+- Files: {stats['total_files']} ({stats['total_size'] / (1024*1024):.1f}MB)
+- Types: {list(stats['file_extensions'].keys())[:5]}
 
-REPOSITORY OVERVIEW:
-- Path: {root_path}
-- Total Files: {stats['total_files']}
-- Total Directories: {stats['total_directories']}
-- Total Size: {stats['total_size'] / (1024*1024):.2f} MB
-- Main File Types: {list(stats['file_extensions'].keys())[:5]}
+STRUCTURE:
+{json.dumps(tree_data['tree'], indent=2)[:1500]}...
 
-REPOSITORY STRUCTURE:
-{json.dumps(tree_data['tree'], indent=2)[:3000]}...
+FILES:
+{self._format_file_list(all_files[:30])}
 
-AVAILABLE FILES:
-{self._format_file_list(all_files[:50])}  # Show first 50 files
-
-ANALYSIS OBJECTIVES:
-1. **Strategic File Selection**: Choose the most important files to analyze first
-2. **Comprehensive Coverage**: Ensure all critical files are analyzed
-3. **Quality Focus**: Prioritize files likely to contain issues
-
-Start by identifying and analyzing the most critical files in the repository. Use the analyze_file tool to delegate analysis of each file to specialized agents.
-
-Focus on files that are:
-- Main entry points and core business logic
-- Configuration and setup files
-- Large or complex files
-- Files with security implications
-- Test files and documentation
-
-Begin your analysis by using the analyze_file or analyze_files_batch tools for the most important files you've identified.
-
-REMEMBER: You must use the provided tools (analyze_file or analyze_files_batch) through the tool-calling interface to analyze files. Do NOT write Python code or return file lists directly in your response.
-
-Example function calls:
-- analyze_file(file_path="src/main.py", analysis_focus="entry point and security")
-- analyze_files_batch(files=[{{"file_path": "src/config.py"}}, {{"file_path": "src/utils.py"}}, {{"file_path": "requirements.txt"}}])
-
-After analyzing files, you will provide a structured response with:
-- issues: List of code quality issues found (required field, can be empty list [])
-- summary: Optional summary dictionary (leave as null/None, do not provide as string)"""
+Use analyze_files_batch or analyze_file to examine critical files (entry points, configs, core logic).
+After analysis, return: {{"issues": [Issues from the analysis with proper schema]}}"""
         
         return prompt
     
     def _build_iteration_prompt(self, tree_data: Dict[str, Any], root_path: Path) -> str:
         """Build prompt for subsequent iterations"""
-        stats = tree_data['statistics']
         all_files = self._get_file_list_from_tree(tree_data)
         remaining_files = [f for f in all_files if f['path'] not in self.analyzed_files]
         
-        prompt = f"""Continue the analysis process. You have already analyzed {len(self.analyzed_files)} files.
+        prompt = f"""Analyzed: {len(self.analyzed_files)} files
 
-REMAINING FILES TO CONSIDER:
-{self._format_file_list(remaining_files[:30])}  # Show first 30 remaining files
+REMAINING:
+{self._format_file_list(remaining_files[:20])}
 
-ANALYZED FILES:
-{', '.join(list(self.analyzed_files)[:10])}{'...' if len(self.analyzed_files) > 10 else ''}
-
-Continue analyzing important files that haven't been analyzed yet. Focus on:
-- Supporting files and utilities
-- Test files and test configuration
-- Documentation files
-- Any remaining large or complex files
-- Files that might contain security or performance issues
-
-When you're ready to provide your analysis results, make sure to:
-- Include the 'issues' field (required) with a list of any code quality issues found
-- Each issue should include: category, severity, file_path, line_number, description, and suggestion
-- If no issues were found, set issues to an empty list: []
-- Do NOT include a summary field (or set it to null)
-
-REMEMBER: Use function calls to analyze files, then provide the structured response with the issues field."""
+Continue with supporting files, tests, and documentation.
+Use tools, then return: {{"issues": [...]}}"""
         
         return prompt
     
@@ -547,7 +428,6 @@ REMEMBER: Use function calls to analyze files, then provide the structured respo
                         'ai_detected': True,
                         'orchestrator_managed': True,
                         'impact': issue_schema.impact or '',
-                        'references': issue_schema.references or [],
                         'detection_timestamp': datetime.now().isoformat(),
                         'iteration': self.current_iteration
                     }
@@ -570,70 +450,20 @@ REMEMBER: Use function calls to analyze files, then provide the structured respo
         stats = tree_data['statistics']
         all_files = self._get_file_list_from_tree(tree_data)
         
-        prompt = f"""A user has asked the following question about this codebase:
+        prompt = f"""User question: "{question}"
 
-QUESTION: "{question}"
+Repository: {root_path} ({stats['total_files']} files, {stats['total_size'] / (1024*1024):.1f}MB)
+Types: {list(stats['file_extensions'].keys())[:5]}
 
-REPOSITORY OVERVIEW:
-- Path: {root_path}
-- Total Files: {stats['total_files']}
-- Total Directories: {stats['total_directories']}
-- Total Size: {stats['total_size'] / (1024*1024):.2f} MB
-- Main File Types: {list(stats['file_extensions'].keys())[:5]}
-
-REPOSITORY STRUCTURE:
-{json.dumps(tree_data['tree'], indent=2)[:2000]}...
-
-AVAILABLE FILES:
-{self._format_file_list(all_files[:50])}  # Show first 50 files"""
+FILES:
+{self._format_file_list(all_files[:30])}"""
 
         # Include existing analysis results if available
         if self._cached_analysis_result:
-            prompt += f"""
+            issues_count = len(self._cached_analysis_result.issues)
+            prompt += f"\n\nPrevious analysis: {issues_count} issues found"
 
-EXISTING CODEBASE ANALYSIS:
-A previous analysis of this codebase has been performed with the following findings:
-
-Quality Score: {self._cached_analysis_result.summary.get('quality_score', 'N/A')}
-Total Issues Found: {len(self._cached_analysis_result.issues)}
-Files Analyzed: {self._cached_analysis_result.summary.get('files_analyzed', 0)}
-
-Issue Categories:"""
-            
-            # Group issues by category
-            issues_by_category = {}
-            for issue in self._cached_analysis_result.issues:
-                category = issue.category.value
-                if category not in issues_by_category:
-                    issues_by_category[category] = []
-                issues_by_category[category].append(issue)
-            
-            for category, issues in issues_by_category.items():
-                prompt += f"\n- {category}: {len(issues)} issues"
-            
-            # Include top issues
-            if self._cached_analysis_result.issues:
-                prompt += "\n\nTop Issues from Previous Analysis:"
-                for i, issue in enumerate(self._cached_analysis_result.issues[:5], 1):
-                    prompt += f"\n{i}. [{issue.severity.value}] {issue.title} in {issue.file_path}"
-                    if issue.description:
-                        prompt += f"\n   {issue.description[:100]}..."
-            
-            prompt += "\n\nThis existing analysis can provide context for answering the user's question.\n"
-
-        prompt += """
-
-To answer this question effectively, analyze the most relevant files in the repository IF needed. 
-Focus on files that are:
-- Main entry points and core business logic
-- Configuration and setup files
-- Files mentioned in the question or related to the topic
-- Documentation files
-- Test files that might show expected behavior
-
-You can use the analyze_file or analyze_files_batch tools for the most relevant files or query_file to get specific details about a file.
-
-REMEMBER: You must use the provided tools through the tool-calling interface to analyze files. Do NOT write Python code or return file lists directly."""
+        prompt += "\n\nAnalyze relevant files if needed using the tools. Focus on files related to the question."""
         
         return prompt
     
@@ -642,22 +472,13 @@ REMEMBER: You must use the provided tools through the tool-calling interface to 
         all_files = self._get_file_list_from_tree(tree_data)
         remaining_files = [f for f in all_files if f['path'] not in self.analyzed_files]
         
-        prompt = f"""Continue analyzing files to answer the user's question: "{question}"
+        prompt = f"""Continue for: "{question}"
+Analyzed: {len(self.analyzed_files)} files
 
-You have already analyzed {len(self.analyzed_files)} files.
+REMAINING:
+{self._format_file_list(remaining_files[:20])}
 
-REMAINING FILES TO CONSIDER:
-{self._format_file_list(remaining_files[:30])}  # Show first 30 remaining files
-
-ANALYZED FILES:
-{', '.join(list(self.analyzed_files)[:10])}{'...' if len(self.analyzed_files) > 10 else ''}
-
-Continue analyzing additional files that might contain relevant information for answering the user's question.
-
-If you believe you have sufficient information to answer the user's question comprehensively, return:
-{{"issues": []}}
-
-REMEMBER: Use function calls to analyze files, do NOT return file lists directly."""
+Analyze more files or return {{"issues": []}} if sufficient information gathered."""
         
         return prompt
     

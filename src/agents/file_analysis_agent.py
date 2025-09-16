@@ -28,43 +28,24 @@ class FileAnalysisAgent(BaseAgent):
     @property
     def system_prompt(self) -> str:
         """System prompt for file analysis"""
-        return """You are a specialized code analysis agent that analyzes individual files for quality issues, security vulnerabilities, performance problems, and maintainability concerns.
+        return """You are a specialized code analysis agent that analyzes individual files for quality issues.
 
-Your expertise includes:
-1. **Code Quality Analysis**: Identifying code smells, anti-patterns, and maintainability issues
-2. **Security Assessment**: Detecting vulnerabilities, unsafe operations, and security best practices
-3. **Performance Analysis**: Finding bottlenecks, inefficient algorithms, and optimization opportunities
-4. **Architecture Review**: Evaluating design patterns, coupling, and design decisions (categorize as 'maintainability' or 'complexity')
-5. **Testing Assessment**: Identifying missing tests, inadequate coverage, and test quality issues
-6. **Documentation Review**: Checking for missing or outdated documentation
-
-Analysis Focus Areas:
-- **Security**: SQL injection, XSS, CSRF, authentication issues, input validation, secure coding practices
-- **Performance**: Algorithm complexity, memory leaks, inefficient loops, database queries, I/O operations
-- **Maintainability**: Code duplication, complex functions, poor naming, lack of abstraction, tight coupling
-- **Maintainability**: Design pattern violations, separation of concerns, dependency management, modularity, architectural decisions
-- **Testing**: Missing unit tests, integration tests, edge cases, test coverage gaps
-- **Documentation**: Missing docstrings, outdated comments, unclear variable names, missing README sections
-
-For each issue you find, provide:
-- Clear, actionable description
-- Specific line number and location
+For each issue found, provide:
+- Clear, actionable description with specific line number
 - Concrete suggestions for improvement
 - Impact assessment
 
-IMPORTANT - Valid Categories:
-When categorizing issues, use ONLY these categories:
-- security: Security vulnerabilities and risks
-- performance: Performance bottlenecks and optimization
+Valid Categories (use ONLY these):
+- security: Vulnerabilities, authentication issues, input validation
+- performance: Bottlenecks, algorithm complexity, resource usage
 - duplication: Code duplication and DRY violations
-- complexity: Complex code that's hard to understand
-- testing: Missing tests or testing issues
-- documentation: Missing or poor documentation
-- style: Code style and formatting issues
-- maintainability: Design issues, coupling, and architectural concerns
-- References to best practices when relevant
+- complexity: Hard to understand/maintain code
+- testing: Missing tests or coverage gaps
+- documentation: Missing/poor documentation
+- style: Code formatting issues
+- maintainability: Design issues, coupling, architectural concerns
 
-Be thorough but focused - prioritize high-impact issues that affect security, performance, or maintainability."""
+Prioritize high-impact issues that affect security, performance, or maintainability."""
 
     @property
     def agent_name(self) -> str:
@@ -213,26 +194,11 @@ Be thorough but focused - prioritize high-impact issues that affect security, pe
         else:
             truncated_note = ""
         
-        # Build context information
-        context_info = ""
-        if repository_context:
-            context_info = f"""
-REPOSITORY CONTEXT:
-- Total files: {repository_context.get('total_files', 'Unknown')}
-- Main languages: {', '.join(repository_context.get('main_languages', []))}
-- Project type: {repository_context.get('project_type', 'Unknown')}
-"""
-        
         # Build focus-specific instructions
         focus_instructions = self._get_focus_instructions(analysis_focus)
         
-        prompt = f"""Analyze this {language} file for code quality issues, security vulnerabilities, performance problems, and maintainability concerns.
-
-FILE INFORMATION:
-- Path: {file_path}
-- Language: {language}
-- Lines: {len(lines)}
-- Size: {len(content)} characters{context_info}
+        prompt = f"""Analyze this {language} file:
+Path: {file_path} ({len(lines)} lines)
 
 ANALYSIS FOCUS: {analysis_focus.upper()}
 {focus_instructions}
@@ -240,128 +206,37 @@ ANALYSIS FOCUS: {analysis_focus.upper()}
 FILE CONTENT:
 {self.format_code_snippet(content, language)}{truncated_note}
 
-ANALYSIS REQUIREMENTS:
-1. **Comprehensive Review**: Examine the entire file for issues
-2. **Specific Locations**: Provide exact line numbers for each issue
-3. **Actionable Suggestions**: Give concrete recommendations for fixes
-4. **Impact Assessment**: Explain the potential impact of each issue
-5. **Best Practices**: Reference relevant coding standards and best practices
-
-Focus on finding issues that are:
-- High impact (security, performance, maintainability)
-- Actionable (can be fixed with specific steps)
-- Well-documented (clear explanation and suggestions)
-
-Provide your analysis in the structured JSON format with detailed issue descriptions."""
+Provide detailed issues with exact line numbers, clear descriptions, and actionable suggestions."""
         
         return prompt
 
     def _build_file_query_prompt(self, *, file_path: str, content: str, question: str,
                                  repository_context: Optional[Dict[str, Any]], truncated: bool) -> str:
-        """Build a question-focused prompt for a specific file.
-
-        The assistant must answer directly using evidence from the file content.
-        """
+        """Build a question-focused prompt for a specific file."""
         file_extension = Path(file_path).suffix.lower()
         language = self._get_language(file_extension)
+        truncated_note = f"\n\n[Note: File truncated to first {self.max_lines} lines]" if truncated else ""
 
-        context_info = ""
-        if repository_context:
-            context_info = f"""
-REPOSITORY CONTEXT:
-- Total files: {repository_context.get('total_files', 'Unknown')}
-- Main languages: {', '.join(repository_context.get('main_languages', []))}
-- Project type: {repository_context.get('project_type', 'Unknown')}
-"""
+        prompt = f"""Answer this question based ONLY on the {language} file content:
 
-        truncated_note = "\n\n[Note: File content truncated to first " + str(self.max_lines) + " lines]" if truncated else ""
+QUESTION: {question}
 
-        prompt = f"""You are inspecting a single {language} file to answer a specific question. Read the file content and provide a concise answer grounded ONLY in the code.
-
-QUESTION:
-{question}
-
-FILE INFORMATION:
-- Path: {file_path}
-- Language: {language}{context_info}
-
-FILE CONTENT:
+FILE: {file_path}
 {self.format_code_snippet(content, language)}{truncated_note}
 
-ANSWERING GUIDELINES:
-1. Answer directly and succinctly, citing exact identifiers, config values, or lines when relevant.
-2. If the answer is not present in this file, say "Not found in this file" and suggest the most likely file(s) to check next (e.g., settings, model/config files) based on the content.
-3. If multiple options exist in the file, state the conditions that select among them.
-4. Do NOT speculate; base your answer strictly on the provided file content.
-"""
-
+Answer directly citing exact code. If not found in this file, say so and suggest where else to look. Don't speculate."""
+        
         return prompt
     
     def _get_focus_instructions(self, analysis_focus: str) -> str:
         """Get specific instructions based on analysis focus"""
         focus_map = {
-            "security": """
-SECURITY FOCUS - Look for:
-- Input validation vulnerabilities
-- SQL injection risks
-- XSS vulnerabilities
-- Authentication and authorization issues
-- Sensitive data exposure
-- Insecure cryptographic practices
-- File system vulnerabilities
-- Network security issues
-""",
-            "performance": """
-PERFORMANCE FOCUS - Look for:
-- Algorithm complexity issues (O(n²), O(n³), etc.)
-- Inefficient loops and iterations
-- Memory leaks and excessive memory usage
-- Database query optimization opportunities
-- I/O operation inefficiencies
-- Caching opportunities
-- Resource management issues
-""",
-            "architecture": """
-ARCHITECTURE FOCUS - Look for:
-- Design pattern violations
-- Tight coupling between components
-- Poor separation of concerns
-- Missing abstractions
-- Dependency management issues
-- Modularity problems
-- Interface design issues
-""",
-            "testing": """
-TESTING FOCUS - Look for:
-- Missing unit tests
-- Inadequate test coverage
-- Missing edge case testing
-- Test quality issues
-- Integration test gaps
-- Mock and stub usage
-- Test organization problems
-""",
-            "documentation": """
-DOCUMENTATION FOCUS - Look for:
-- Missing docstrings and comments
-- Unclear variable and function names
-- Missing type hints or annotations
-- Outdated documentation
-- Missing README sections
-- API documentation gaps
-""",
-            "general": """
-GENERAL FOCUS - Look for:
-- Code quality and maintainability issues
-- Security vulnerabilities
-- Performance problems
-- Maintainability and design issues (categorize as 'maintainability')
-- Testing gaps (categorize as 'testing')
-- Documentation issues (categorize as 'documentation')
-- Style and consistency problems (categorize as 'style')
-
-IMPORTANT: Only use these valid categories: security, performance, duplication, complexity, testing, documentation, style, maintainability
-"""
+            "security": "Focus on: input validation, injection risks, authentication, data exposure, crypto issues",
+            "performance": "Focus on: algorithm complexity, inefficient loops, memory usage, query optimization, I/O operations",
+            "architecture": "Focus on: design patterns, coupling, separation of concerns, abstractions, dependencies",
+            "testing": "Focus on: missing tests, coverage gaps, edge cases, test quality",
+            "documentation": "Focus on: missing docstrings, unclear names, type hints, outdated docs",
+            "general": "Analyze all aspects: security, performance, maintainability, testing, documentation"
         }
         
         return focus_map.get(analysis_focus.lower(), focus_map["general"])
@@ -414,7 +289,6 @@ IMPORTANT: Only use these valid categories: security, performance, duplication, 
                         'ai_detected': True,
                         'file_analysis_agent': True,
                         'impact': issue_schema.impact or '',
-                        'references': issue_schema.references or [],
                         'detection_timestamp': datetime.now().isoformat()
                     }
                 )
@@ -647,25 +521,10 @@ IMPORTANT: Only use these valid categories: security, performance, duplication, 
         else:
             truncated_note = ""
         
-        # Build context information
-        context_info = ""
-        if repository_context:
-            context_info = f"""
-REPOSITORY CONTEXT:
-- Total files: {repository_context.get('total_files', 'Unknown')}
-- Main languages: {', '.join(repository_context.get('main_languages', []))}
-- Project type: {repository_context.get('project_type', 'Unknown')}
-"""
-        
-        # Build focus-specific instructions
         focus_instructions = self._get_focus_instructions(analysis_focus)
         
-        prompt = f"""Analyze this {language} file for code quality issues and suggest next steps for the orchestrator.
-
-FILE INFORMATION:
-- Path: {file_path}
-- Language: {language}
-- Lines: {len(lines)}{context_info}
+        prompt = f"""Analyze {language} file and suggest next steps:
+Path: {file_path} ({len(lines)} lines)
 
 ANALYSIS FOCUS: {analysis_focus.upper()}
 {focus_instructions}
@@ -673,24 +532,9 @@ ANALYSIS FOCUS: {analysis_focus.upper()}
 FILE CONTENT:
 {self.format_code_snippet(content, language)}{truncated_note}
 
-ANALYSIS REQUIREMENTS:
-
-1. **Code Issues**: Find quality, security, performance, and maintainability issues
-   - Provide exact line numbers and specific descriptions
-   - Include actionable suggestions for fixes
-
-2. **Next Steps**: Suggest what the orchestrator should check next, for example:
-   - If this is an implementation file (e.g., calculator.py), suggest: "check if calculate_total function has tests in test_calculator.py"
-   - If this is a test file, suggest: "verify that all functions from calculator.py are tested here"
-   - If imports are found, suggest: "analyze imported module utils.py for related issues"
-   - Be specific with function/class names and file paths
-
-3. **Summary**: Brief summary of the file's purpose and quality
-
-Return as FileAnalysisResultEnhanced with:
-- file_path: The path to this file
-- issues: List of code issues found
-- next_steps: List of specific suggestions (as strings) for what to check next
-- summary: Brief summary of the analysis"""
+Return FileAnalysisResultEnhanced with:
+- issues: Code issues with line numbers and fixes
+- next_steps: Specific suggestions (e.g., "check if X function has tests in test_X.py")
+- summary: Brief file purpose and quality summary"""
         
         return prompt

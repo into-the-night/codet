@@ -154,7 +154,7 @@ class BaseAgent:
                 HumanMessage(content=full_prompt)
             ]
             
-            response = await self.llm.ainvoke(messages)    
+            response = await self.llm.ainvoke(messages)
             response_text = response.content if hasattr(response, 'content') else str(response)
             await self._add_to_cache(cache_key, response_text)
             
@@ -197,7 +197,6 @@ class BaseAgent:
                 HumanMessage(content=full_prompt)
             ]
             
-
             response = await self.llm.ainvoke(messages)
 
             # Extract content
@@ -282,7 +281,6 @@ class BaseAgent:
             # First invocation with tools
             response = await llm_with_tools.ainvoke(messages)
             if hasattr(response, 'tool_calls') and response.tool_calls:
-                
                 # Execute tool calls
                 tool_messages = []
                 for tool_call in response.tool_calls:
@@ -292,7 +290,6 @@ class BaseAgent:
                     if function_name in function_handlers:
                         try:
                             result = await function_handlers[function_name](**function_args)
-                            
                             # Ensure result is serializable
                             if isinstance(result, (dict, list)):
                                 result_content = json.dumps(result)
@@ -325,14 +322,12 @@ class BaseAgent:
                 Important: 
                 - Do NOT make any more function calls
                 - Provide ONLY the structured response with the required fields
-                - For AnalysisResponseSchema: provide 'issues' (list, required) and optionally 'summary' (dict or null)
+                - For AnalysisResponseSchema: provide 'issues' (list, required)
                 - For ChatResponseSchema: provide 'answer' (string), 'files_to_analyze' (list), and 'analysis_complete' (boolean)"""
                 
                 messages.append(HumanMessage(content=final_prompt))
-                
                 structured_llm = self.llm.with_structured_output(response_schema)
                 final_result = await structured_llm.ainvoke(messages)
-                
                 await self._add_to_cache(cache_key, final_result.model_dump_json())
                 return final_result
                 
@@ -346,15 +341,13 @@ class BaseAgent:
                 
                 Important: 
                 - Provide ONLY the structured response with the required fields
-                - For AnalysisResponseSchema: provide 'issues' (list, required) and optionally 'summary' (dict or null)
+                - For AnalysisResponseSchema: provide 'issues' (list, required)
                 - For ChatResponseSchema: provide 'answer' (string), 'files_to_analyze' (list), and 'analysis_complete' (boolean)"""
                 
                 messages.append(HumanMessage(content=final_prompt))
-                
                 # Get structured response
                 structured_llm = self.llm.with_structured_output(response_schema)
                 final_result = await structured_llm.ainvoke(messages)
-
                 # Cache the result
                 await self._add_to_cache(cache_key, final_result.model_dump_json())
                 return final_result

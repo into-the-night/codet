@@ -38,14 +38,11 @@ class CodeIssueSchema(BaseModel):
     suggestion: Optional[str] = Field(None, description="Specific recommendation to fix the issue")
     code_snippet: Optional[str] = Field(None, description="Relevant code snippet if applicable")
     impact: Optional[str] = Field(None, description="Potential impact description")
-    references: Optional[List[str]] = Field(None, description="Links to best practices or documentation")
 
 
 class AnalysisResponseSchema(BaseModel):
     """Schema for the complete analysis response"""
     issues: List[CodeIssueSchema] = Field(description="List of code quality issues found")
-    summary: Optional[Dict[str, Any]] = Field(None, description="Summary of the analysis")
-
 
 class ChatResponseSchema(BaseModel):
     """Schema for chat mode responses"""

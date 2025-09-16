@@ -104,7 +104,25 @@ def analyze(path, output, format, config, use_local, ollama_model, index, collec
     (Retrieval-Augmented Generation) to enable semantic search capabilities
     for more context-aware analysis. Use --index to force indexing for smaller repos.
     """                                                                                                                                                                                                                     
+    import tempfile
+    import shutil
+    
     path = Path(path)
+    original_path = path
+    
+    # Check if path is a file, if so create temp directory and copy file
+    if path.is_file():
+        temp_dir = Path(tempfile.mkdtemp(prefix="codet_file_"))
+        
+        # Copy the file to temp directory, preserving the filename
+        temp_file_path = temp_dir / path.name
+        shutil.copy2(path, temp_file_path)
+        
+        # Update path to point to temp directory
+        path = temp_dir
+        console.print(f"[cyan]📄 Analyzing file:[/cyan] {original_path.name}")
+    else:
+        console.print(f"[cyan]📁 Analyzing directory:[/cyan] {path.name}")
     
     # Check if repository needs indexing
     size_checker = RepoSizeChecker(
@@ -226,7 +244,6 @@ def analyze(path, output, format, config, use_local, ollama_model, index, collec
         progress.update(task, description="🧠 Configuring orchestrator analysis...")
         
         if use_local:
-            import tempfile
             import yaml
             
             config_data = {}
@@ -342,7 +359,6 @@ def analyze(path, output, format, config, use_local, ollama_model, index, collec
         progress.update(task, advance=50)
         
         if use_local:
-            import tempfile
             import yaml
 
             config_data = {}

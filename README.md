@@ -41,7 +41,7 @@ cd frontend && npm install && cd ..
 2. **Configure environment**
 ```bash
 cp config/env.example .env
-# Add your GOOGLE_API_KEY to .env
+# Add your GOOGLE_API_KEY to .env & QDRANT_URL , QDRANT_API_KEY for using Qdrant cloud VectorStore
 ```
 
 3. **Start services**
@@ -87,7 +87,7 @@ Create `config.yaml`:
 ```yaml
 agent:
   google_api_key: ${GOOGLE_API_KEY}
-  model_name: gemini-1.5-flash
+  gemini_model: gemini-2.5-flash
   
 analyzer:
   severity_threshold: low
