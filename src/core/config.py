@@ -4,10 +4,16 @@ from pathlib import Path
 from typing import Optional
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from pydantic import Field
+from dotenv import load_dotenv
+
+load_dotenv()
 
 
 class Settings(BaseSettings):
     """Application settings loaded from environment variables"""
+
+    # API Authentication
+    api_key: str = Field("", alias="API_KEY")
 
     # Gemini configuration (default cloud LLM)
     google_api_key: Optional[str] = Field(None, alias="GOOGLE_API_KEY")
