@@ -204,9 +204,9 @@ class OrchestratorEngine:
                 }
         
         # Create batch file analysis handler
-        async def batch_file_analysis_handler(files: List[Dict[str, str]]) -> Dict[str, Any]:
+        async def batch_file_analysis_handler(file_paths: List[str], analysis_focus: Optional[str] = "general") -> Dict[str, Any]:
             """Handle batch file analysis requests from the orchestrator"""
-            logger.info(f"Orchestrator requested batch analysis of {len(files)} files")
+            logger.info(f"Orchestrator requested batch analysis of {len(file_paths)} files")
             
             # Get repository context
             repository_context = {
@@ -221,9 +221,7 @@ class OrchestratorEngine:
             
             # Create tasks for parallel analysis
             analysis_tasks = []
-            for file_info in files:
-                file_path = file_info.get('file_path', '')
-                analysis_focus = file_info.get('analysis_focus', 'general')
+            for file_path in file_paths:
                 
                 # Skip if already analyzed
                 if file_path in self.analyzed_files:

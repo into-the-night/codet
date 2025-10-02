@@ -9,7 +9,8 @@ class AnalyzeFile(BaseModel):
 
 class AnalyzeFilesBatch(BaseModel):
     """Analyzes a batch of files to understand their content, structure, and functionality for answering questions about the codebase."""
-    files: List[AnalyzeFile] = Field(..., description="A list of files to analyze.")
+    file_paths: List[str] = Field(..., description="A list of file paths to analyze.")
+    analysis_focus: Optional[str] = Field("general", description="Specific focus area for analysis (e.g., 'security', 'performance', 'general')")
 
 class QueryFile(BaseModel):
     """Queries a specific file to retrieve relevant information for answering questions about that file."""
