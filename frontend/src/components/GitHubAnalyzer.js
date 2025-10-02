@@ -40,7 +40,7 @@ const GitHubAnalyzer = () => {
 
     let progressInterval;
     try {
-      // Simulate progress updates (slower for more realistic feel)
+      // Simulate progress updates (slower for more realistic feel) This is MAGIC!
       progressInterval = setInterval(() => {
         setAnalysisProgress(prev => {
           if (prev >= 90) {
@@ -354,8 +354,8 @@ const GitHubAnalyzer = () => {
                 </div>
                 <div className="progress-text">
                   {analysisProgress < 30 && "Cloning repository..."}
-                  {analysisProgress >= 30 && analysisProgress < 60 && "Scanning files..."}
-                  {analysisProgress >= 60 && analysisProgress < 90 && "Analyzing code quality..."}
+                  {analysisProgress >= 30 && analysisProgress < 50 && "Scanning files..."}
+                  {analysisProgress >= 50 && analysisProgress < 90 && "Analyzing code quality..."}
                   {analysisProgress >= 90 && "Finalizing results..."}
                 </div>
               </div>

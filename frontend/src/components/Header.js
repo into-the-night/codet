@@ -1,9 +1,8 @@
 import React from 'react';
-import { Link, useLocation } from 'react-router-dom';
+import { Link } from 'react-router-dom';
 import './Header.css';
 
 const Header = () => {
-  const location = useLocation();
 
   return (
     <header className="header">
@@ -20,14 +19,6 @@ const Header = () => {
             <span className="logo-text">codet</span>
           </Link>
           
-          <nav className="nav">
-            <Link 
-              to="/" 
-              className={`nav-link ${location.pathname === '/' ? 'active' : ''}`}
-            >
-              Analyze
-            </Link>
-          </nav>
         </div>
       </div>
     </header>

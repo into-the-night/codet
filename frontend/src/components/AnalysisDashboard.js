@@ -105,7 +105,7 @@ const AnalysisDashboard = () => {
       const errorMessage = {
         id: Date.now() + 1,
         type: 'error',
-        content: err.response?.data?.detail || err.message || 'Failed to get response from the AI',
+        content: err.response?.data?.detail || err.message || 'Failed to get response from codet',
         timestamp: new Date().toISOString(),
         session_id: null
       };
@@ -179,12 +179,6 @@ const AnalysisDashboard = () => {
 
   const githubRepo = extractGithubRepo();
 
-  // Debug logging
-  console.log('Analysis Data:', analysisData);
-  console.log('Summary:', summary);
-  console.log('GitHub URL from summary:', summary?.github_url);
-  console.log('Project Path:', summary?.project_path);
-  console.log('Extracted GitHub Repo:', githubRepo);
 
   return (
     <div className="analysis-dashboard">

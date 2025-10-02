@@ -123,7 +123,6 @@ async def root():
             "upload": "/api/upload",
             "ask": "/api/ask/{analysis_id}",
             "report": "/api/report/{analysis_id}",
-            "chat": "/api/chat"
         }
     }
 
