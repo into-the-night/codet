@@ -24,6 +24,7 @@ class OrchestratorAgent(BaseAgent):
         config: AgentConfig,
         redis_config: Optional[RedisConfig] = None,
         mode: str = "analysis",
+        use_parallel: bool = True,
         custom_system_prompt: Optional[str] = None,
         has_indexed_codebase: bool = False,
         session_id: Optional[str] = None
@@ -34,6 +35,7 @@ class OrchestratorAgent(BaseAgent):
         self.max_iterations = 10  # Prevent infinite loops
         self.current_iteration = 0
         self.mode = mode  # 'analysis' or 'chat'
+        self.use_parallel = use_parallel
         self.has_indexed_codebase = has_indexed_codebase  # Track if codebase is indexed
         self.custom_system_prompt = custom_system_prompt  # Allow custom prompts
         self.user_question = None  # Store user question for chat mode
@@ -75,11 +77,7 @@ File Priority:
 - Core logic and configuration files
 - Large/complex files
 - Test files and documentation
-
-Tools:
-- AnalyzeFilesBatch(files_paths, analysis_focus): Analyze multiple files (3-5 optimal)
-- AnalyzeFile(file_path, analysis_focus): Single file analysis
-- QueryFile(file_path, question): Answer specific file questions"""
+"""
 
         # Add query_codebase if available
         if self.has_indexed_codebase:
@@ -98,11 +96,7 @@ When a user asks about the codebase:
 2. Choose relevant files to examine
 3. Use tools to analyze files
 4. Provide comprehensive answers with code details
-
-Tools:
-- AnalyzeFilesBatch(files_paths, analysis_focus): Analyze multiple files (3-5 optimal)
-- AnalyzeFile(file_path, analysis_focus): Deep analysis of a single file
-- QueryFile(file_path, question): Answer specific file questions"""
+"""
         
         # Add query_codebase to prompt if available
         if self.has_indexed_codebase:
@@ -198,7 +192,9 @@ Tools:
                 function_prompt = prompt + "\n\nIMPORTANT: You have access to these functions:\n"
                 function_prompt += "1. QueryFile(file_path, question) - answer a focused question about a single file\n"
                 function_prompt += "2. AnalyzeFile(file_path, analysis_focus) - deep code-quality analysis when necessary\n"
-                function_prompt += "3. - AnalyzeFilesBatch(files_paths, analysis_focus): Analyze multiple files (3-5 optimal)\n\n"
+                
+                if self.use_parallel:
+                    function_prompt += "3. AnalyzeFilesBatch(files_paths, analysis_focus): Analyze multiple files (3-5 optimal)\n\n"
                 
                 if self.has_indexed_codebase:
                     function_prompt += "4. QueryCodebase(question, search_limit) - search the indexed codebase to find patterns and answer cross-file questions\n"
@@ -222,9 +218,11 @@ Tools:
                 # Build function declarations based on available features
                 function_declarations = [
                     AnalyzeFile,
-                    AnalyzeFilesBatch,
                     QueryFile
                 ]
+                
+                if self.use_parallel:
+                    function_declarations.append(AnalyzeFilesBatch)
                 
                 # Only include query_codebase if codebase is indexed
                 if self.has_indexed_codebase:

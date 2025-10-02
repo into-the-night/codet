@@ -88,25 +88,28 @@ def main():
 @click.option('--output', '-o', type=click.Path(), help='💾 Output file for report')
 @click.option('--format', '-f', type=click.Choice(['console', 'json']), default='console', help='📊 Output format')
 @click.option('--config', '-c', type=click.Path(exists=True), help='⚙️  Configuration file path')
+@click.option('--use-parallel-agents', is_flag=True, help='🔃 Use agents parallely (set to False by default to avoid hitting RPM quotas early)')
 @click.option('--use-local', is_flag=True, help='🏠 Use local Ollama LLM instead of Gemini')
 @click.option('--ollama-model', default='llama3.2', help='🤖 Ollama model to use (default: llama3.2)')
 @click.option('--index', is_flag=True, help='🔍 Index codebase for RAG before analysis')
 @click.option('--collection', default=None, help='📦 Qdrant collection name (used with --index)')
 @click.option('--qdrant-url', default=None, help='🌐 Qdrant server URL (used with --index)')
 @click.option('--qdrant-api-key', default=None, help='🔑 Qdrant API key (used with --index)')
-def analyze(path, output, format, config, use_local, ollama_model, index, collection, qdrant_url, qdrant_api_key):
+def analyze(path, output, format, config, use_parallel_agents, use_local, ollama_model, index, collection, qdrant_url, qdrant_api_key):
     """🎯 Analyze code quality using intelligent orchestrator flow
     
     Uses an intelligent orchestrator that strategically selects files to analyze
     and coordinates the analysis process for comprehensive coverage.
     
-    Large repositories are automatically indexed into Qdrant for RAG
+    Large repositories are automatically indexed into Qdrant forf RAG
     (Retrieval-Augmented Generation) to enable semantic search capabilities
     for more context-aware analysis. Use --index to force indexing for smaller repos.
     """                                                                                                                                                                                                                     
     import tempfile
     import shutil
+    import time
     
+    start_time = time.time()
     path = Path(path)
     original_path = path
     
@@ -143,7 +146,7 @@ def analyze(path, output, format, config, use_local, ollama_model, index, collec
     
     info_text = (
         f"[bold cyan]📁 Analyzing:[/bold cyan] {path.absolute()}\n"
-        f"[bold cyan]🎯 Analysis Mode:[/bold cyan] Orchestrator Flow\n"
+        f"[bold cyan]🔃 Parallel Agents:[/bold cyan] {'Enabled' if use_parallel_agents else 'Disabled'}\n"
         f"[bold cyan]🤖 LLM Mode:[/bold cyan] {llm_mode} ({llm_model})"
     )
     
@@ -267,6 +270,7 @@ def analyze(path, output, format, config, use_local, ollama_model, index, collec
         
         engine.enable_analysis(
             config_path,
+            use_parallel=use_parallel_agents,
             has_indexed_codebase=index or needs_indexing,
             collection_name=collection
         )
@@ -284,6 +288,8 @@ def analyze(path, output, format, config, use_local, ollama_model, index, collec
         progress.update(task, advance=40)
         
         progress.update(task, completed=100)
+    
+    end_time = time.time()
     
     # Display results based on format
     if format == 'console':
@@ -318,19 +324,12 @@ def analyze(path, output, format, config, use_local, ollama_model, index, collec
     # Show summary with emojis and better formatting
     console.print()
     
-    # Count orchestrator-managed issues
-    orchestrator_issues = [i for i in result.issues if i.metadata and i.metadata.get('orchestrator_managed')]
-    file_analysis_issues = [i for i in result.issues if i.metadata and i.metadata.get('file_analysis_agent')]
-    
     summary_text = f"[bold green]✅ Orchestrator Analysis Complete![/bold green]\n\n"
     summary_text += f"📊 Total issues found: [bold]{len(result.issues)}[/bold]\n"
-    if orchestrator_issues:
-        summary_text += f"🎯 Orchestrator-managed issues: [bold]{len(orchestrator_issues)}[/bold]\n"
-    if file_analysis_issues:
-        summary_text += f"🔍 File analysis issues: [bold]{len(file_analysis_issues)}[/bold]\n"
-    
+
     summary_text += f"\n📁 Files analyzed: [bold]{result.summary.get('files_analyzed', 'Unknown')}[/bold]\n"
     summary_text += f"🔄 Orchestrator iterations: [bold]{result.summary.get('orchestrator_iterations', 'Unknown')}[/bold]\n"
+    summary_text += f"🕰️ Analysis Time: [bold cyan]{end_time - start_time:.2f} seconds[/bold cyan]\n"
     summary_text += f"🏆 Quality score: [bold cyan]{result.summary['quality_score']:.1f}/100[/bold cyan]"
     
     summary_panel = Panel(
@@ -382,7 +381,7 @@ def analyze(path, output, format, config, use_local, ollama_model, index, collec
         else:
             config_path = Path(config) if config else None
         
-        chat_engine.initialize_agents(config_path)
+        chat_engine.initialize_agents(config_path, use_parallel=use_parallel_agents)
         progress.update(task, advance=50)
         progress.update(task, completed=100)
         

@@ -20,8 +20,14 @@ logger = logging.getLogger(__name__)
 class OrchestratorEngine:
     """Main orchestrator engine that coordinates the analysis flow"""
     
-    def __init__(self, config: Optional[Config] = None, mode: str = "analysis", 
-                 has_indexed_codebase: bool = False, collection_name: Optional[str] = None, session_id: Optional[str] = None):
+    def __init__(
+        self, 
+        config: Optional[Config] = None, 
+        mode: str = "analysis",
+        has_indexed_codebase: bool = False, 
+        collection_name: Optional[str] = None, 
+        session_id: Optional[str] = None
+        ):
         self.config = config or Config.load()
         self.mode = mode  # 'analysis' or 'chat'
         self.has_indexed_codebase = has_indexed_codebase
@@ -39,7 +45,13 @@ class OrchestratorEngine:
         self._codebase_indexer = None
         self._cached_analysis_result = None  # Store cached analysis for chat mode
         self.session_id = session_id
-    def initialize_agents(self, config_path: Optional[Path] = None, custom_system_prompt: Optional[str] = None):
+
+    def initialize_agents(
+        self,
+        config_path: Optional[Path] = None,
+        use_parallel: bool = True,
+        custom_system_prompt: Optional[str] = None
+        ):
         """Initialize the orchestrator and file analysis agents"""
         try:
             if config_path:
@@ -54,6 +66,7 @@ class OrchestratorEngine:
                 full_config.agent,
                 full_config.redis,
                 mode=self.mode,
+                use_parallel=use_parallel,
                 custom_system_prompt=custom_system_prompt,
                 has_indexed_codebase=self.has_indexed_codebase,
                 session_id=self.session_id
