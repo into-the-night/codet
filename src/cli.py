@@ -15,7 +15,7 @@ import asyncio
 
 import httpx
 
-from .core.config import settings
+from .core.config import get_settings
 from .core.analysis_engine import AnalysisEngine
 from .core.orchestrator_engine import OrchestratorEngine
 from .codebase_indexer import MultiLanguageCodebaseParser, QdrantCodebaseIndexer
@@ -108,7 +108,12 @@ def analyze(path, output, format, config, use_parallel_agents, use_local, ollama
     import tempfile
     import shutil
     import time
-    
+
+    if config:
+        settings = get_settings(config)
+    else:
+        settings = get_settings()
+        
     start_time = time.time()
     path = Path(path)
     original_path = path
@@ -247,21 +252,19 @@ def analyze(path, output, format, config, use_parallel_agents, use_local, ollama
         progress.update(task, description="🧠 Configuring orchestrator analysis...")
         
         if use_local:
-            import yaml
-            
-            config_data = {}
+            env_data = []
             if config:
                 with open(config, 'r') as f:
-                    config_data = yaml.safe_load(f) or {}
+                    env_data = f.readlines()
             
-            if 'agent' not in config_data:
-                config_data['agent'] = {}
+            # Add or update local LLM settings
+            env_data.extend([
+                'USE_LOCAL_LLM=true\n',
+                f'OLLAMA_MODEL={ollama_model}\n'
+            ])
             
-            config_data['agent']['use_local'] = True
-            config_data['agent']['ollama_model'] = ollama_model
-            
-            with tempfile.NamedTemporaryFile(mode='w', suffix='.yaml', delete=False) as f:
-                yaml.dump(config_data, f)
+            with tempfile.NamedTemporaryFile(mode='w', suffix='.env', delete=False) as f:
+                f.writelines(env_data)
                 temp_config_path = f.name
             
             config_path = Path(temp_config_path)
@@ -356,30 +359,6 @@ def analyze(path, output, format, config, use_parallel_agents, use_local, ollama
         )
         chat_engine.set_cached_analysis(result)
         progress.update(task, advance=50)
-        
-        if use_local:
-            import yaml
-
-            config_data = {}
-            if config:
-                with open(config, 'r') as f:
-                    config_data = yaml.safe_load(f) or {}
-            
-            # Update with local LLM settings
-            if 'agent' not in config_data:
-                config_data['agent'] = {}
-            
-            config_data['agent']['use_local'] = True
-            config_data['agent']['ollama_model'] = ollama_model
-            
-            # Write temporary config
-            with tempfile.NamedTemporaryFile(mode='w', suffix='.yaml', delete=False) as f:
-                yaml.dump(config_data, f)
-                temp_config_path = f.name
-            
-            config_path = Path(temp_config_path)
-        else:
-            config_path = Path(config) if config else None
         
         chat_engine.initialize_agents(config_path, use_parallel=use_parallel_agents)
         progress.update(task, advance=50)

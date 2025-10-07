@@ -2,23 +2,18 @@
 
 import json
 import logging
-import asyncio
-import uuid
-import time
 from typing import Dict, Any, List, Optional, Type, TypeVar, Callable
-from pathlib import Path
 
 from langchain_ollama import ChatOllama
 from langchain_google_genai import ChatGoogleGenerativeAI
-from langchain_core.messages import HumanMessage, SystemMessage, AIMessage, ToolMessage
-from langchain_core.tools import tool
+from langchain_core.messages import HumanMessage, SystemMessage, ToolMessage
 from langchain_core.output_parsers import PydanticOutputParser
 from langchain_core.prompts import ChatPromptTemplate, SystemMessagePromptTemplate, HumanMessagePromptTemplate
 from pydantic import BaseModel
 
 from ..core.config import AgentConfig, RedisConfig
 from ..core.redis_client import RedisClient, get_redis_client
-from ..core.message_history import MessageHistoryManager, MessageRole
+from ..core.message_history import MessageHistoryManager
 
 logger = logging.getLogger(__name__)
 

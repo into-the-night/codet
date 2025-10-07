@@ -6,7 +6,15 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 from pydantic import Field
 from dotenv import load_dotenv
 
-load_dotenv()
+def load_env_file(env_path: Optional[str] = None):
+    """Load environment variables from the specified path or default locations"""
+    if env_path:
+        if not Path(env_path).exists():
+            raise ValueError(f"Config file not found: {env_path}")
+        load_dotenv(env_path)
+    else:
+        # Try loading from default locations
+        load_dotenv()
 
 class Settings(BaseSettings):
     """Application settings loaded from environment variables"""
@@ -85,9 +93,16 @@ class Settings(BaseSettings):
         return True
 
 
-# Create a single global instance
-settings = Settings()
+# Create a single global instance with default settings
+settings = None
 
+def get_settings(config_path: Optional[str] = None) -> Settings:
+    """Get or create settings instance with optional config path"""
+    global settings
+    if settings is None:
+        load_env_file(config_path)
+        settings = Settings()
+    return settings
 
 # Compatibility layer for old code
 class AgentConfig:
@@ -149,8 +164,10 @@ class Config:
     @classmethod
     def load(cls, config_path=None):
         """Load configuration (compatibility method)"""
-        return cls(settings)
+        settings_instance = get_settings(config_path)
+        return cls(settings_instance)
         
     def validate(self):
         """Validate configuration (compatibility method)"""
-        return settings.validate_settings()
+        settings_instance = get_settings()
+        return settings_instance.validate_settings()
