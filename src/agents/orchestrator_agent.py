@@ -177,7 +177,7 @@ When a user asks about the codebase:
                     prompt += "This is the message history:"
                     prompt += json.dumps(message_history, indent=2)
         else:
-            prompt = self._build_orchestration_prompt(tree_data, root_path)
+            prompt = self._build_analysis_prompt(tree_data, root_path)
         
         # Run the orchestration loop
         while self.current_iteration < self.max_iterations:
@@ -185,7 +185,6 @@ When a user asks about the codebase:
             logger.info(f"Orchestration iteration {self.current_iteration}")
             
             try:
-                # Log available functions
                 logger.info(f"Available functions for orchestrator: {list(self.function_handlers.keys())}")
                 
                 # Build function prompt based on available features
@@ -212,10 +211,8 @@ When a user asks about the codebase:
                 for handler_name, handler_func in self.function_handlers.items():
                     logger.info(f"  {handler_name}: {'SET' if handler_func is not None else 'NOT SET'}")
                 
-                # Choose the appropriate schema based on mode
                 response_schema = ChatResponseSchema if self.mode == "chat" else AnalysisResponseSchema
                 
-                # Build function declarations based on available features
                 function_declarations = [
                     AnalyzeFile,
                     QueryFile
@@ -224,7 +221,6 @@ When a user asks about the codebase:
                 if self.use_parallel:
                     function_declarations.append(AnalyzeFilesBatch)
                 
-                # Only include query_codebase if codebase is indexed
                 if self.has_indexed_codebase:
                     function_declarations.append(QueryCodebase)
                 
@@ -246,7 +242,6 @@ When a user asks about the codebase:
                 if self.mode == "chat":
                     # Chat mode - check if analysis is complete
                     if hasattr(response, 'analysis_complete') and response.analysis_complete:
-                        # Store the final answer
                         self.chat_answer = response.answer
                         logger.info("Chat analysis complete")
                         break
@@ -257,17 +252,26 @@ When a user asks about the codebase:
                         prompt = self._build_chat_iteration_prompt(user_question, tree_data, root_path)
                 else:
                     # Analysis mode - check for issues
-                    if hasattr(response, 'issues') and response.issues:
+                    if hasattr(response, 'issues'):
                         # Convert to CodeIssue objects and store
                         issues = self._convert_to_code_issues(response.issues, root_path)
                         self.analysis_results.extend(issues)
                         logger.info(f"Found {len(issues)} issues in iteration {self.current_iteration}")
-                        
-                        # Update prompt for next iteration
+
                         prompt = self._build_iteration_prompt(tree_data, root_path)
+                    elif hasattr(response, 'get'):
+                        # Handle total issue count reporting
+                        issues_found = response.get("issues_found") or response.get("total_issues_found")
+
+                        if issues_found is not None:
+                            logger.info(f"Found {issues_found} issues in iteration {self.current_iteration}")
+                            prompt = self._build_iteration_prompt(tree_data, root_path)
+                        else:
+                            # No more issues found, analysis complete
+                            logger.info("Orchestration complete - no more issues found")
+                            break
                     else:
-                        # No more issues found, analysis complete
-                        logger.info("Orchestration complete - no more issues found")
+                        logger.warning("No issues found in iteration {self.current_iteration}")
                         break
                     
             except Exception as e:
@@ -303,7 +307,7 @@ When a user asks about the codebase:
             logger.info(f"Analysis orchestration complete: {len(all_issues)} total issues found")
             return all_issues
     
-    def _build_orchestration_prompt(self, tree_data: Dict[str, Any], root_path: Path) -> str:
+    def _build_analysis_prompt(self, tree_data: Dict[str, Any], root_path: Path) -> str:
         """Build the initial orchestration prompt"""
         stats = tree_data['statistics']
         all_files = self._get_file_list_from_tree(tree_data)

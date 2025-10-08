@@ -293,7 +293,6 @@ class OrchestratorEngine:
                 'total_issues_found': sum(r.get('issues_found', 0) for r in results if r.get('success', False))
             }
         
-        # Set up handlers for both single and batch analysis
         logger.info("Setting up function handlers in orchestrator engine")
 
         # query_file handler: ask a focused question about a file

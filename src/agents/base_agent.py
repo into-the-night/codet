@@ -14,6 +14,7 @@ from pydantic import BaseModel
 from ..core.config import AgentConfig, RedisConfig
 from ..core.redis_client import RedisClient, get_redis_client
 from ..core.message_history import MessageHistoryManager
+from ..agents.schemas import ChatResponseSchema
 
 logger = logging.getLogger(__name__)
 
@@ -312,19 +313,25 @@ class BaseAgent:
                 messages.extend([response] + tool_messages)
                 # Add a clear instruction for structured output
                 schema_name = response_schema.__name__
-                final_prompt = f"""Based on the function execution results above, provide your final response as a {schema_name}. 
-                
-                Important: 
-                - Do NOT make any more function calls
-                - Provide ONLY the structured response with the required fields
-                - For AnalysisResponseSchema: provide 'issues' (list, required)
-                - For ChatResponseSchema: provide 'answer' (string), 'files_to_analyze' (list), and 'analysis_complete' (boolean)"""
-                
-                messages.append(HumanMessage(content=final_prompt))
-                structured_llm = self.llm.with_structured_output(response_schema)
-                final_result = await structured_llm.ainvoke(messages)
-                await self._add_to_cache(cache_key, final_result.model_dump_json())
-                return final_result
+
+                # Handle chat mode response schema or query functions
+                if response_schema == ChatResponseSchema or function_name in ["QueryFile", "QueryCodebase"]:
+                    final_prompt = f"""Based on the function execution results above, provide your final response as a {schema_name}. 
+                    
+                    Important: 
+                    - Do NOT make any more function calls
+                    - Provide ONLY the structured response with the required fields
+                    - For AnalysisResponseSchema: provide 'issues' (list, required)
+                    - For ChatResponseSchema: provide 'answer' (string), 'files_to_analyze' (list), and 'analysis_complete' (boolean)"""
+                    
+                    messages.append(HumanMessage(content=final_prompt))
+                    structured_llm = self.llm.with_structured_output(response_schema)
+                    final_result = await structured_llm.ainvoke(messages)
+                    await self._add_to_cache(cache_key, final_result.model_dump_json())
+                    return final_result
+                else:
+                    # Just return the response (file analysis already adds the issues to Orchestrator Engine)
+                    return result
                 
             else:
                 # No tool calls detected - still need to get structured response
@@ -332,20 +339,24 @@ class BaseAgent:
                 
                 # Add instruction for structured output
                 schema_name = response_schema.__name__
-                final_prompt = f"""Please provide your response as a {schema_name} in the required structured format. 
-                
-                Important: 
-                - Provide ONLY the structured response with the required fields
-                - For AnalysisResponseSchema: provide 'issues' (list, required)
-                - For ChatResponseSchema: provide 'answer' (string), 'files_to_analyze' (list), and 'analysis_complete' (boolean)"""
-                
-                messages.append(HumanMessage(content=final_prompt))
-                # Get structured response
-                structured_llm = self.llm.with_structured_output(response_schema)
-                final_result = await structured_llm.ainvoke(messages)
-                # Cache the result
-                await self._add_to_cache(cache_key, final_result.model_dump_json())
-                return final_result
+
+                # Handle chat mode response schema
+                if response_schema == ChatResponseSchema:
+                    final_prompt = f"""Please provide your response as a {schema_name} in the required structured format. 
+                    
+                    Important: 
+                    - Provide ONLY the structured response with the required fields
+                    - For ChatResponseSchema: provide 'answer' (string), 'files_to_analyze' (list), and 'analysis_complete' (boolean)"""
+                    
+                    messages.append(HumanMessage(content=final_prompt))
+                    # Get structured response
+                    structured_llm = self.llm.with_structured_output(response_schema)
+                    final_result = await structured_llm.ainvoke(messages)
+                    # Cache the result
+                    await self._add_to_cache(cache_key, final_result.model_dump_json())
+                    return final_result
+                else:
+                    return response
             
         except Exception as e:
             logger.error(f"Error generating structured response with functions: {e}")

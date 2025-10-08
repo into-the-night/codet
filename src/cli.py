@@ -239,18 +239,13 @@ def analyze(path, output, format, config, use_parallel_agents, use_local, ollama
         TextColumn("[bold cyan]{task.description}[/bold cyan]"),
         BarColumn(bar_width=40),
         TaskProgressColumn(),
-        TimeRemainingColumn(),
         console=console,
         transient=True
     ) as progress:
-        task = progress.add_task("🚀 Initializing analysis engine...", total=100)
-        
-        progress.update(task, description="🧠 Initializing AI analysis...")
+        task = progress.add_task("🚀 Initializing analysis engine...", total=None)
+
         engine = AnalysisEngine()
-        progress.update(task, advance=20)
-        
-        progress.update(task, description="🧠 Configuring orchestrator analysis...")
-        
+     
         if use_local:
             env_data = []
             if config:
@@ -281,16 +276,12 @@ def analyze(path, output, format, config, use_parallel_agents, use_local, ollama
         if not engine.enable_orchestrator:
             console.print("[red]❌ Error: Orchestrator analysis could not be enabled.[/red]")
             return
-        progress.update(task, advance=20)
-        
-        progress.update(task, description="🌳 Constructing repository tree...")
-        progress.update(task, advance=20)
+
         
         progress.update(task, description="🎯 Orchestrator analyzing files...")
         result = asyncio.run(engine.analyze_repository(path))
-        progress.update(task, advance=40)
-        
-        progress.update(task, completed=100)
+
+        progress.update(task, completed=True)
     
     end_time = time.time()
     
