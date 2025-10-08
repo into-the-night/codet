@@ -201,7 +201,7 @@ class BaseAgent:
             # Parse the structured response
             try:
                 if not response_text or not response_text.strip():
-                    logger.warning("Received empty response from LLM")
+                    logger.warning(f"Received empty response from LLM: {response_text} & {response}")
                     return response_schema.model_validate({"issues": []})
                 
                 result = parser.parse(response_text)

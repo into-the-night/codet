@@ -32,7 +32,6 @@ class CodeIssueSchema(BaseModel):
     severity: IssueSeverityEnum = Field(description="Severity level of the issue")
     title: str = Field(description="Brief descriptive title of the issue")
     description: str = Field(description="Detailed explanation of the issue")
-    file_path: str = Field(description="Path to the file containing the issue")
     line_number: Optional[int] = Field(None, description="Line number where the issue occurs")
     column_number: Optional[int] = Field(None, description="Column number where the issue occurs")
     suggestion: Optional[str] = Field(None, description="Specific recommendation to fix the issue")
