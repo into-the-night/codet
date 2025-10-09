@@ -271,7 +271,7 @@ When a user asks about the codebase:
                             logger.info("Orchestration complete - no more issues found")
                             break
                     else:
-                        logger.warning("No issues found in iteration {self.current_iteration}")
+                        logger.warning(f"No issues found in iteration {self.current_iteration}")
                         break
                     
             except Exception as e:
