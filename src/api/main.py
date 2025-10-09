@@ -17,7 +17,7 @@ import os
 from ..analyzers.analyzer import AnalysisResult
 from ..core.analysis_engine import AnalysisEngine
 from ..core.orchestrator_engine import OrchestratorEngine
-from ..core.config import settings, RedisConfig
+from ..core.config import RedisConfig, get_settings
 from ..core.redis_client import get_redis_client, close_redis_client
 from .models import (
     AnalysisRequest, 
@@ -33,6 +33,8 @@ import base64
 # Initialize logger
 logger = logging.getLogger(__name__)
 
+settings = get_settings()
+
 # Redis client for caching analysis results
 redis_client = None
 parser = MultiLanguageCodebaseParser()
@@ -44,6 +46,7 @@ temp_directories = set()
 async def lifespan(app: FastAPI):
     # Startup
     global redis_client
+
     redis_config = RedisConfig(settings)
     redis_client = await get_redis_client(redis_config)
     logger.info("Redis client initialized")
