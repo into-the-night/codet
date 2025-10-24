@@ -34,7 +34,7 @@ def check_ollama_running(model: str = "llama3.2") -> bool:
         if response.status_code == 200:
             # Check if the specified model is available
             models = response.json().get("models", [])
-            model_names = [m.get("name", "").split(":")[0] for m in models]
+            model_names = [m.get("name", "") for m in models]
             
             if model in model_names:
                 return True
@@ -109,14 +109,37 @@ def analyze(path, output, format, config, use_parallel_agents, use_local, ollama
     import shutil
     import time
 
-    if config:
-        settings = get_settings(config)
-    else:
-        settings = get_settings()
-        
     start_time = time.time()
     path = Path(path)
     original_path = path
+
+    if use_local:
+        llm_mode = "Local (Ollama)"
+        llm_model = ollama_model
+
+        env_data = []
+        if config:
+            with open(config, 'r') as f:
+                env_data = f.readlines()
+        
+        # Add or update local LLM settings
+        env_data.extend([
+            'USE_LOCAL_LLM=true\n',
+            f'OLLAMA_MODEL={ollama_model}\n'
+        ])
+        
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.env', delete=False) as f:
+            f.writelines(env_data)
+            temp_config_path = f.name
+        
+        config_path = Path(temp_config_path)
+    else:
+        llm_mode = "Cloud (Gemini)"
+        llm_model = settings.gemini_model
+        config_path = Path(config) if config else None
+    
+    settings = get_settings(config_path)
+
     
     # Check if path is a file, if so create temp directory and copy file
     if path.is_file():
@@ -142,13 +165,6 @@ def analyze(path, output, format, config, use_parallel_agents, use_local, ollama
     size_check = size_checker.check_repository(path)
     needs_indexing = size_check['needs_indexing'] or index
 
-    if use_local:
-        llm_mode = "Local (Ollama)"
-        llm_model = ollama_model
-    else:
-        llm_mode = "Cloud (Gemini)"
-        llm_model = settings.gemini_model
-    
     info_text = (
         f"[bold cyan]📁 Analyzing:[/bold cyan] {path.absolute()}\n"
         f"[bold cyan]🔃 Parallel Agents:[/bold cyan] {'Enabled' if use_parallel_agents else 'Disabled'}\n"
@@ -245,26 +261,6 @@ def analyze(path, output, format, config, use_parallel_agents, use_local, ollama
         task = progress.add_task("🚀 Initializing analysis engine...", total=None)
 
         engine = AnalysisEngine()
-     
-        if use_local:
-            env_data = []
-            if config:
-                with open(config, 'r') as f:
-                    env_data = f.readlines()
-            
-            # Add or update local LLM settings
-            env_data.extend([
-                'USE_LOCAL_LLM=true\n',
-                f'OLLAMA_MODEL={ollama_model}\n'
-            ])
-            
-            with tempfile.NamedTemporaryFile(mode='w', suffix='.env', delete=False) as f:
-                f.writelines(env_data)
-                temp_config_path = f.name
-            
-            config_path = Path(temp_config_path)
-        else:
-            config_path = Path(config) if config else None
         
         engine.enable_analysis(
             config_path,

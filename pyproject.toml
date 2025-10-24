@@ -1,5 +1,5 @@
 [project]
-name = "code-quality-intelligence"
+name = "codet"
 version = "0.1.0"
 description = "An intelligent code quality analysis tool with interactive Q&A capabilities"
 readme = "README.md"
