@@ -154,6 +154,7 @@ class OrchestratorEngine:
             repository_context = {
                 'total_files': tree_data['statistics']['total_files'],
                 'main_languages': list(tree_data['statistics']['file_extensions'].keys())[:5],
+                'tree': tree_data['tree'],
                 'project_type': self._detect_project_type(tree_data),
                 'shared_memory': self.shared_memory
             }
@@ -236,6 +237,7 @@ class OrchestratorEngine:
             repository_context = {
                 'total_files': tree_data['statistics']['total_files'],
                 'main_languages': list(tree_data['statistics']['file_extensions'].keys())[:5],
+                'tree': tree_data['tree'],
                 'project_type': self._detect_project_type(tree_data),
                 'shared_memory': self.shared_memory
             }
@@ -313,6 +315,7 @@ class OrchestratorEngine:
                 repository_context = {
                     'total_files': tree_data['statistics']['total_files'],
                     'main_languages': list(tree_data['statistics']['file_extensions'].keys())[:5],
+                    'tree': tree_data['tree'],
                     'project_type': self._detect_project_type(tree_data),
                     'shared_memory': self.shared_memory
                 }
@@ -353,6 +356,7 @@ class OrchestratorEngine:
                 repository_context = {
                     'total_files': tree_data['statistics']['total_files'],
                     'main_languages': list(tree_data['statistics']['file_extensions'].keys())[:5],
+                    'tree': tree_data['tree'],
                     'project_type': self._detect_project_type(tree_data),
                     'search_results': len(results.get('merged', [])),
                     'shared_memory': self.shared_memory

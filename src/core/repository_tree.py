@@ -232,7 +232,8 @@ class RepositoryTreeConstructor:
         
         return stats
     
-    def get_file_list(self, tree_data: Dict[str, Any]) -> List[Dict[str, Any]]:
+    @staticmethod
+    def get_file_list(tree_data: Dict[str, Any]) -> List[Dict[str, Any]]:
         """Extract file list from tree data"""
         files = []
     
@@ -266,7 +267,8 @@ class RepositoryTreeConstructor:
             if file_info.get('extension', '').lower() in extension_set
         ]
     
-    def get_tree_summary(self, tree_data: Dict[str, Any]) -> str:
+    @staticmethod
+    def get_tree_summary(tree_data: Dict[str, Any]) -> str:
         """Generate a human-readable summary of the repository tree"""
         stats = tree_data['statistics']
         
@@ -289,7 +291,8 @@ class RepositoryTreeConstructor:
         
         return summary
 
-    def _format_file_list(self, files: List[Dict[str, Any]]) -> str:
+    @staticmethod
+    def format_file_list(files: List[Dict[str, Any]]) -> str:
         """Format file list for display"""
         if not files:
             return "No files available"

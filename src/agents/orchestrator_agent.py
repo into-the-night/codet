@@ -13,6 +13,7 @@ from ..analyzers.analyzer import CodeIssue, IssueCategory, IssueSeverity
 from .tools import AnalyzeFile, QueryCodebase, QueryFile, AnalyzeFilesBatch
 from ..core.message_history import MessageRole
 from ..core.shared_memory import SharedMemory
+from ..core.repository_tree import RepositoryTreeConstructor as TreeConstructor
 
 logger = logging.getLogger(__name__)
 
@@ -349,7 +350,7 @@ Examples: "Check if process_order() has proper error handling", "Verify API auth
     def _build_analysis_prompt(self, tree_data: Dict[str, Any], root_path: Path) -> str:
         """Build the initial orchestration prompt"""
         stats = tree_data['statistics']
-        all_files = self._get_file_list_from_tree(tree_data)
+        all_files = TreeConstructor.get_file_list(tree_data)
         
         prompt = f"""Analyzing repository: {root_path}
 - Files: {stats['total_files']} ({stats['total_size'] / (1024*1024):.1f}MB)
@@ -359,7 +360,7 @@ STRUCTURE:
 {json.dumps(tree_data['tree'], indent=2)}...
 
 FILES:
-{self._format_file_list(all_files)}"""
+{TreeConstructor.format_file_list(all_files)}"""
 
         # Add shared memory content if available
         if self.shared_memory and len(self.shared_memory) > 0:
@@ -377,13 +378,13 @@ Priority: Address these action items first by analyzing relevant files."""
     
     def _build_iteration_prompt(self, tree_data: Dict[str, Any], root_path: Path) -> str:
         """Build prompt for subsequent iterations"""
-        all_files = self._get_file_list_from_tree(tree_data)
+        all_files = TreeConstructor.get_file_list(tree_data)
         remaining_files = [f for f in all_files if f['path'] not in self.analyzed_files]
         
         prompt = f"""Analyzed: {len(self.analyzed_files)} files
 
 REMAINING:
-{self._format_file_list(remaining_files)}"""
+{TreeConstructor.format_file_list(remaining_files)}"""
 
         # Add shared memory content if available
         if self.shared_memory and len(self.shared_memory) > 0:
@@ -470,7 +471,7 @@ Review these items and analyze files that address them. Remove completed items."
     def _build_chat_prompt(self, question: str, tree_data: Dict[str, Any], root_path: Path) -> str:
         """Build the initial prompt for chat mode"""
         stats = tree_data['statistics']
-        all_files = self._get_file_list_from_tree(tree_data)
+        all_files = TreeConstructor.get_file_list(tree_data)
         
         prompt = f"""User question: "{question}"
 
@@ -478,7 +479,7 @@ Repository: {root_path} ({stats['total_files']} files, {stats['total_size'] / (1
 Types: {list(stats['file_extensions'].keys())[:5]}
 
 FILES:
-{self._format_file_list(all_files)}"""
+{TreeConstructor.format_file_list(all_files)}"""
 
         # Include existing analysis results if available
         if self._cached_analysis_result:
@@ -499,14 +500,14 @@ SHARED MEMORY - Context from Previous Analysis:
     
     def _build_chat_iteration_prompt(self, question: str, tree_data: Dict[str, Any], root_path: Path) -> str:
         """Build iteration prompt for chat mode"""
-        all_files = self._get_file_list_from_tree(tree_data)
+        all_files = TreeConstructor.get_file_list(tree_data)
         remaining_files = [f for f in all_files if f['path'] not in self.analyzed_files]
         
         prompt = f"""Continue for: "{question}"
 Analyzed: {len(self.analyzed_files)} files
 
 REMAINING:
-{format_file_list(remaining_files)}"""
+{TreeConstructor.format_file_list(remaining_files)}"""
 
         # Add shared memory content if available
         if self.shared_memory and len(self.shared_memory) > 0:

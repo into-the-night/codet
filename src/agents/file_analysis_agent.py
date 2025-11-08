@@ -1,6 +1,7 @@
 """Individual file analysis agent that analyzes specific files"""
 
 import logging
+import json
 from typing import Dict, Any, List, Optional
 from pathlib import Path
 from datetime import datetime
@@ -14,6 +15,7 @@ from .schemas import (
 from ..core.config import AgentConfig
 from ..core.shared_memory import SharedMemory
 from ..analyzers.analyzer import CodeIssue, IssueCategory, IssueSeverity
+from ..core.repository_tree import RepositoryTreeConstructor as TreeConstructor
 
 logger = logging.getLogger(__name__)
 
@@ -159,7 +161,11 @@ Prioritize high-impact issues that affect security, performance, or maintainabil
             
             # Build analysis prompt
             prompt = self._build_file_analysis_prompt(
-                file_path, content, analysis_focus, repository_context, shared_memory
+                file_path=file_path,
+                content=content,
+                analysis_focus=analysis_focus,
+                repository_context=repository_context,
+                shared_memory=shared_memory
             )
             
             # Generate structured analysis
@@ -211,6 +217,7 @@ Prioritize high-impact issues that affect security, performance, or maintainabil
         """Build analysis prompt for a specific file"""
         file_extension = Path(file_path).suffix.lower()
         language = self._get_language(file_extension)
+        all_files = TreeConstructor.get_file_list(repository_context['tree'])
         
         # Truncate very long files
         lines = content.splitlines()
@@ -225,6 +232,12 @@ Prioritize high-impact issues that affect security, performance, or maintainabil
         
         prompt = f"""Analyze this {language} file:
 Path: {file_path} ({len(lines)} lines)
+
+STRUCTURE:
+{json.dumps(repository_context['tree'], indent=2)}
+
+FILES:
+{TreeConstructor.format_file_list(all_files)}...
 
 ANALYSIS FOCUS: {analysis_focus.upper()}
 {focus_instructions}"""

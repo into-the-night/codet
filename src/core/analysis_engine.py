@@ -5,7 +5,7 @@ from typing import List, Dict, Any, Optional
 import logging
 
 from ..analyzers.analyzer import AnalysisResult
-from ..core.repository_tree import RepositoryTreeConstructor
+from ..core.repository_tree import RepositoryTreeConstructor as TreeConstructor
 from ..core.config import Config
 from ..core.orchestrator_engine import OrchestratorEngine
 from ..reports.report_generator import ReportGenerator
@@ -18,7 +18,7 @@ class AnalysisEngine:
     
     def __init__(self, config: Optional[Dict[str, Any]] = None):
         self.config = config or {}
-        self.tree_constructor = RepositoryTreeConstructor()
+        self.tree_constructor = TreeConstructor()
         self.report_generator = ReportGenerator()
         self.orchestrator_engine = None
         self.enable_orchestrator = False
@@ -69,7 +69,7 @@ class AnalysisEngine:
     def get_tree_summary(self, path: Path) -> str:
         """Get a summary of the repository tree structure"""
         tree_data = self.tree_constructor.construct_tree(path)
-        return self.tree_constructor.get_tree_summary(tree_data)
+        return TreeConstructor.get_tree_summary(tree_data)
     
     def get_file_list(self, path: Path, 
                      extensions: Optional[List[str]] = None) -> List[Dict[str, Any]]:
@@ -79,4 +79,4 @@ class AnalysisEngine:
         if extensions:
             return self.tree_constructor.filter_files_by_extension(tree_data, extensions)
         else:
-            return self.tree_constructor.get_file_list(tree_data)
+            return TreeConstructor.get_file_list(tree_data)
