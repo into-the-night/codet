@@ -12,6 +12,7 @@ from ..core.config import AgentConfig, RedisConfig
 from ..analyzers.analyzer import CodeIssue, IssueCategory, IssueSeverity
 from .tools import AnalyzeFile, QueryCodebase, QueryFile, AnalyzeFilesBatch
 from ..core.message_history import MessageRole
+from ..core.shared_memory import SharedMemory
 
 logger = logging.getLogger(__name__)
 
@@ -27,7 +28,8 @@ class OrchestratorAgent(BaseAgent):
         use_parallel: bool = True,
         custom_system_prompt: Optional[str] = None,
         has_indexed_codebase: bool = False,
-        session_id: Optional[str] = None
+        session_id: Optional[str] = None,
+        shared_memory: Optional[SharedMemory] = None
         ):
         super().__init__(config, redis_config)
         self.analysis_results = []  # Store results from each analysis iteration
@@ -42,6 +44,7 @@ class OrchestratorAgent(BaseAgent):
         self.chat_answer = None  # Store final answer for chat mode
         self._cached_analysis_result = None  # Store cached analysis for chat mode
         self.session_id = session_id  # Store message key for chat mode
+        self.shared_memory = shared_memory  # Shared memory for cross-codebase context
 
         # Function handlers - will be set by the analysis engine
         self.function_handlers = {}
@@ -72,6 +75,18 @@ WORKFLOW:
 2. Wait for tool results
 3. Return {"issues": [...]} with findings
 
+SHARED MEMORY:
+- Review shared memory for pending action items before selecting files
+- Prioritize analyzing files related to pending action items
+- After analyzing files that address action items, you can remove completed items
+- Add new items when discovering cross-file dependencies or concerns
+- Generate memory_items in your response for cross-codebase context
+
+Examples of good memory items:
+  * "Check if authenticate() function has tests in test_auth.py"
+  * "Verify error handling in payment_processor.py matches validation.py"
+  * "Ensure User class methods are documented"
+
 File Priority:
 - Entry points (main.py, index.js, app.py)
 - Core logic and configuration files
@@ -96,6 +111,13 @@ When a user asks about the codebase:
 2. Choose relevant files to examine
 3. Use tools to analyze files
 4. Provide comprehensive answers with code details
+
+SHARED MEMORY:
+- Review shared memory for context from previous analysis steps
+- Add action items when discovering related concerns across files
+- Generate memory_items in your response for cross-codebase context
+
+Examples: "Check if process_order() has proper error handling", "Verify API authentication is consistent"
 """
         
         # Add query_codebase to prompt if available
@@ -244,11 +266,23 @@ When a user asks about the codebase:
                     if hasattr(response, 'analysis_complete') and response.analysis_complete:
                         self.chat_answer = response.answer
                         logger.info("Chat analysis complete")
+                        
+                        # Add any memory items from the response
+                        if self.shared_memory and hasattr(response, 'memory_items') and response.memory_items:
+                            self.shared_memory.add_items(response.memory_items)
+                            logger.info(f"Added {len(response.memory_items)} memory items from orchestrator chat response")
+                        
                         break
                     else:
                         # Continue analyzing files if needed
                         if hasattr(response, 'files_to_analyze') and response.files_to_analyze:
                             logger.info(f"Chat mode: Need to analyze {len(response.files_to_analyze)} more files")
+                        
+                        # Add any memory items from the response
+                        if self.shared_memory and hasattr(response, 'memory_items') and response.memory_items:
+                            self.shared_memory.add_items(response.memory_items)
+                            logger.info(f"Added {len(response.memory_items)} memory items from orchestrator chat response")
+                        
                         prompt = self._build_chat_iteration_prompt(user_question, tree_data, root_path)
                 else:
                     # Analysis mode - check for issues
@@ -257,6 +291,11 @@ When a user asks about the codebase:
                         issues = self._convert_to_code_issues(response.issues, root_path)
                         self.analysis_results.extend(issues)
                         logger.info(f"Found {len(issues)} issues in iteration {self.current_iteration}")
+                        
+                        # Add any memory items from the response
+                        if self.shared_memory and hasattr(response, 'memory_items') and response.memory_items:
+                            self.shared_memory.add_items(response.memory_items)
+                            logger.info(f"Added {len(response.memory_items)} memory items from orchestrator response")
 
                         prompt = self._build_iteration_prompt(tree_data, root_path)
                     elif hasattr(response, 'get'):
@@ -320,10 +359,19 @@ STRUCTURE:
 {json.dumps(tree_data['tree'], indent=2)}...
 
 FILES:
-{self._format_file_list(all_files)}
+{self._format_file_list(all_files)}"""
 
-Use analyze_files_batch or analyze_file to examine critical files (entry points, configs, core logic).
-After analysis, return: {{"issues": [Issues from the analysis with proper schema]}}"""
+        # Add shared memory content if available
+        if self.shared_memory and len(self.shared_memory) > 0:
+            memory_items = self.shared_memory.format_items()
+            prompt += f"""
+
+SHARED MEMORY - Pending Action Items:
+{memory_items}
+
+Priority: Address these action items first by analyzing relevant files."""
+        
+        prompt += "\n\nUse analyze_files_batch or analyze_file to examine critical files (entry points, configs, core logic).\nAfter analysis, return: {\"issues\": [Issues from the analysis with proper schema]}"
         
         return prompt
     
@@ -335,47 +383,21 @@ After analysis, return: {{"issues": [Issues from the analysis with proper schema
         prompt = f"""Analyzed: {len(self.analyzed_files)} files
 
 REMAINING:
-{self._format_file_list(remaining_files)}
+{self._format_file_list(remaining_files)}"""
 
-Continue with supporting files, tests, and documentation.
-Use tools, then return: {{"issues": [...]}}"""
+        # Add shared memory content if available
+        if self.shared_memory and len(self.shared_memory) > 0:
+            memory_items = self.shared_memory.format_items()
+            prompt += f"""
+
+SHARED MEMORY - Pending Action Items:
+{memory_items}
+
+Review these items and analyze files that address them. Remove completed items."""
+        
+        prompt += "\n\nContinue with supporting files, tests, and documentation.\nUse tools, then return: {\"issues\": [...]}"
         
         return prompt
-    
-    def _get_file_list_from_tree(self, tree_data: Dict[str, Any]) -> List[Dict[str, Any]]:
-        """Extract file list from tree data"""
-        files = []
-        
-        def extract_files(node, current_path=""):
-            if isinstance(node, dict):
-                # Check if this is a file node
-                if node.get('is_file', False):
-                    files.append({
-                        'path': node.get('path', current_path),
-                        'size': node.get('size', 0),
-                        'extension': node.get('extension', ''),
-                        'name': node.get('name', '')
-                    })
-                # Check if this is a directory node with children
-                elif node.get('is_directory', False) and 'children' in node:
-                    # children is a list, not a dictionary
-                    for child_data in node['children']:
-                        extract_files(child_data, current_path)
-        
-        extract_files(tree_data['tree'])
-        return files
-    
-    def _format_file_list(self, files: List[Dict[str, Any]]) -> str:
-        """Format file list for display"""
-        if not files:
-            return "No files available"
-        
-        formatted = []
-        for file_info in files:
-            size_kb = file_info['size'] / 1024 if file_info['size'] > 0 else 0
-            formatted.append(f"- {file_info['path']} ({size_kb:.1f}KB, {file_info['extension']})")
-        
-        return '\n'.join(formatted)
     
     def _convert_to_code_issues(self, issues: List[CodeIssueSchema], root_path: Path) -> List[CodeIssue]:
         """Convert schema issues to CodeIssue objects"""
@@ -463,6 +485,14 @@ FILES:
             issues_count = len(self._cached_analysis_result.issues)
             prompt += f"\n\nPrevious analysis: {issues_count} issues found"
 
+        # Add shared memory content if available
+        if self.shared_memory and len(self.shared_memory) > 0:
+            memory_items = self.shared_memory.format_items()
+            prompt += f"""
+
+SHARED MEMORY - Context from Previous Analysis:
+{memory_items}"""
+
         prompt += "\n\nYou can query relevant files if needed using the tools. Focus on files related to the user's question ONLY. DO NOT ASSUME ANYTHING."""
         
         return prompt
@@ -476,9 +506,17 @@ FILES:
 Analyzed: {len(self.analyzed_files)} files
 
 REMAINING:
-{self._format_file_list(remaining_files)}
+{format_file_list(remaining_files)}"""
 
-Analyze more files or return {{"issues": []}} if sufficient information gathered."""
+        # Add shared memory content if available
+        if self.shared_memory and len(self.shared_memory) > 0:
+            memory_items = self.shared_memory.format_items()
+            prompt += f"""
+
+SHARED MEMORY - Context:
+{memory_items}"""
+
+        prompt += "\n\nAnalyze more files or return {\"issues\": []} if sufficient information gathered."
         
         return prompt
     

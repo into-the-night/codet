@@ -9,12 +9,6 @@ from ..core.repository_tree import RepositoryTreeConstructor
 from ..core.config import Config
 from ..core.orchestrator_engine import OrchestratorEngine
 from ..reports.report_generator import ReportGenerator
-from ..analyzers import (
-    PythonAnalyzer,
-    JavaScriptAnalyzer,
-    DuplicationAnalyzer
-)
-
 
 logger = logging.getLogger(__name__)
 
@@ -26,7 +20,6 @@ class AnalysisEngine:
         self.config = config or {}
         self.tree_constructor = RepositoryTreeConstructor()
         self.report_generator = ReportGenerator()
-        self.analyzers = self._initialize_analyzers()
         self.orchestrator_engine = None
         self.enable_orchestrator = False
         
@@ -57,14 +50,6 @@ class AnalysisEngine:
             logger.error(f"Failed to enable orchestrator analysis: {e}")
             self.enable_orchestrator = False
 
-    def _initialize_analyzers(self) -> List:
-        """Initialize all available analyzers"""
-        return [
-            PythonAnalyzer(self.config.get('python', {})),
-            JavaScriptAnalyzer(self.config.get('javascript', {})),
-            DuplicationAnalyzer(self.config.get('duplication', {}))
-        ]
-    
     async def analyze_repository(self, path: Path) -> AnalysisResult:
         """
         Analyze repository using the orchestrator flow

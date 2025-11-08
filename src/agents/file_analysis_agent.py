@@ -12,6 +12,7 @@ from .schemas import (
     FileAnalysisResultEnhanced
 )
 from ..core.config import AgentConfig
+from ..core.shared_memory import SharedMemory
 from ..analyzers.analyzer import CodeIssue, IssueCategory, IssueSeverity
 
 logger = logging.getLogger(__name__)
@@ -20,10 +21,11 @@ logger = logging.getLogger(__name__)
 class FileAnalysisAgent(BaseAgent):
     """Specialized agent for analyzing individual files"""
     
-    def __init__(self, config: AgentConfig):
+    def __init__(self, config: AgentConfig, shared_memory: Optional[SharedMemory] = None):
         super().__init__(config)
         self.max_file_size = 1024 * 1024  # 1MB max file size
         self.max_lines = 1000  # Max lines to analyze per file
+        self.shared_memory = shared_memory  # Shared memory for cross-codebase context
         
     @property
     def system_prompt(self) -> str:
@@ -44,6 +46,17 @@ Valid Categories (use ONLY these):
 - documentation: Missing/poor documentation
 - style: Code formatting issues
 - maintainability: Design issues, coupling, architectural concerns
+
+SHARED MEMORY - Cross-codebase Context:
+When analyzing files, if you discover functions/classes/logic that needs verification elsewhere:
+- Add clear, specific action items to shared memory (append-only)
+- Examples of good action items:
+  * "Check if authenticate() function has tests in test_auth.py"
+  * "Verify error handling for process_payment() is consistent across codebase"
+  * "Ensure API_KEY configuration is validated before use in api_client.py"
+  * "Check if User class methods are properly documented"
+
+Make action items specific with function/class names and relevant file paths when possible.
 
 Prioritize high-impact issues that affect security, performance, or maintainability."""
 
@@ -117,6 +130,13 @@ Prioritize high-impact issues that affect security, performance, or maintainabil
         """
         logger.info(f"Analyzing file: {file_path} (focus: {analysis_focus})")
         
+        # Get shared memory from repository context if available
+        shared_memory = None
+        if repository_context and 'shared_memory' in repository_context:
+            shared_memory = repository_context['shared_memory']
+        elif self.shared_memory:
+            shared_memory = self.shared_memory
+        
         full_path = root_path / file_path
         
         if not full_path.exists():
@@ -139,7 +159,7 @@ Prioritize high-impact issues that affect security, performance, or maintainabil
             
             # Build analysis prompt
             prompt = self._build_file_analysis_prompt(
-                file_path, content, analysis_focus, repository_context
+                file_path, content, analysis_focus, repository_context, shared_memory
             )
             
             # Generate structured analysis
@@ -157,6 +177,11 @@ Prioritize high-impact issues that affect security, performance, or maintainabil
                 
                 # Convert to CodeIssue objects
                 issues = self._convert_to_code_issues(structured_response.issues, full_path)
+                
+                # Add generated memory items to shared memory
+                if shared_memory and hasattr(structured_response, 'memory_items') and structured_response.memory_items:
+                    shared_memory.add_items(structured_response.memory_items)
+                    logger.info(f"Added {len(structured_response.memory_items)} memory items to shared memory from {file_path}")
                 
             except Exception as e:
                 logger.warning(f"Structured analysis failed, falling back to text parsing: {e}")
@@ -181,7 +206,8 @@ Prioritize high-impact issues that affect security, performance, or maintainabil
     
     def _build_file_analysis_prompt(self, file_path: str, content: str,
                                    analysis_focus: str,
-                                   repository_context: Optional[Dict[str, Any]]) -> str:
+                                   repository_context: Optional[Dict[str, Any]],
+                                   shared_memory: Optional[SharedMemory] = None) -> str:
         """Build analysis prompt for a specific file"""
         file_extension = Path(file_path).suffix.lower()
         language = self._get_language(file_extension)
@@ -201,12 +227,29 @@ Prioritize high-impact issues that affect security, performance, or maintainabil
 Path: {file_path} ({len(lines)} lines)
 
 ANALYSIS FOCUS: {analysis_focus.upper()}
-{focus_instructions}
+{focus_instructions}"""
+
+        # Add shared memory context if available
+        if shared_memory and len(shared_memory) > 0:
+            memory_items = shared_memory.format_items()
+            prompt += f"""
+
+SHARED MEMORY - Existing Context:
+{memory_items}
+
+Review these items for context about what needs to be checked across the codebase."""
+        
+        prompt += f"""
 
 FILE CONTENT:
 {self.format_code_snippet(content, language)}{truncated_note}
 
-Provide detailed issues with exact line numbers, clear descriptions, and actionable suggestions."""
+Provide detailed issues with exact line numbers, clear descriptions, and actionable suggestions.
+
+IMPORTANT: Generate memory_items for cross-codebase verification needs:
+- Include specific function/class names and suggested files to check
+- Examples: "Check if authenticate() has tests in test_auth.py", "Verify User class usage in user_service.py"
+"""
         
         return prompt
 
@@ -437,6 +480,13 @@ Answer directly citing exact code. If not found in this file, say so and suggest
         """
         logger.info(f"Enhanced analysis of file: {file_path} (focus: {analysis_focus})")
         
+        # Get shared memory from repository context if available
+        shared_memory = None
+        if repository_context and 'shared_memory' in repository_context:
+            shared_memory = repository_context['shared_memory']
+        elif self.shared_memory:
+            shared_memory = self.shared_memory
+        
         full_path = root_path / file_path
         
         if not full_path.exists() or not full_path.is_file():
@@ -462,7 +512,7 @@ Answer directly citing exact code. If not found in this file, say so and suggest
             
             # Build enhanced analysis prompt
             prompt = self._build_enhanced_analysis_prompt(
-                file_path, content, analysis_focus, repository_context, is_test_file
+                file_path, content, analysis_focus, repository_context, is_test_file, shared_memory
             )
             
             # Generate structured analysis with enhanced schema
@@ -483,8 +533,17 @@ Answer directly citing exact code. If not found in this file, say so and suggest
                 code_issues = self._convert_to_code_issues(structured_response.issues, full_path)
                 structured_response.issues = code_issues
             
-            logger.info(f"Enhanced analysis complete: {len(structured_response.issues)} issues, "
-                       f"{len(structured_response.next_steps)} next steps suggested")
+            # Add next steps and memory items to shared memory if available
+            if shared_memory:
+                all_memory_items = []
+                if hasattr(structured_response, 'memory_items') and structured_response.memory_items:
+                    all_memory_items.extend(structured_response.memory_items)
+                
+                if all_memory_items:
+                    shared_memory.add_items(all_memory_items)
+                    logger.info(f"Added {len(all_memory_items)} memory items to shared memory from {file_path}")
+            
+            logger.info(f"Enhanced analysis complete: {len(structured_response.issues)} issues")
             
             return structured_response
             
@@ -508,7 +567,8 @@ Answer directly citing exact code. If not found in this file, say so and suggest
     def _build_enhanced_analysis_prompt(self, file_path: str, content: str,
                                       analysis_focus: str,
                                       repository_context: Optional[Dict[str, Any]],
-                                      is_test_file: bool) -> str:
+                                      is_test_file: bool,
+                                      shared_memory: Optional[SharedMemory] = None) -> str:
         """Build enhanced analysis prompt that requests next steps"""
         file_extension = Path(file_path).suffix.lower()
         language = self._get_language(file_extension)
@@ -527,14 +587,28 @@ Answer directly citing exact code. If not found in this file, say so and suggest
 Path: {file_path} ({len(lines)} lines)
 
 ANALYSIS FOCUS: {analysis_focus.upper()}
-{focus_instructions}
+{focus_instructions}"""
+
+        # Add shared memory context if available
+        if shared_memory and len(shared_memory) > 0:
+            memory_items = shared_memory.format_items()
+            prompt += f"""
+
+SHARED MEMORY - Existing Context:
+{memory_items}
+
+Review these items for context about what needs to be checked."""
+        
+        prompt += f"""
 
 FILE CONTENT:
 {self.format_code_snippet(content, language)}{truncated_note}
 
 Return FileAnalysisResultEnhanced with:
 - issues: Code issues with line numbers and fixes
-- next_steps: Specific suggestions (e.g., "check if X function has tests in test_X.py")
-- summary: Brief file purpose and quality summary"""
+- memory_items: Action items for cross-codebase verification (e.g., "Check if X function has tests in test_X.py", "Verify Y class usage in related files")
+- summary: Brief file purpose and quality summary
+
+IMPORTANT: Generate specific memory_items with function/class names and target files."""
         
         return prompt

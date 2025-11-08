@@ -10,6 +10,7 @@ import uuid
 from ..analyzers.analyzer import AnalysisResult, CodeIssue
 from ..core.repository_tree import RepositoryTreeConstructor
 from .config import Config
+from .shared_memory import SharedMemory
 from ..agents.orchestrator_agent import OrchestratorAgent
 from ..agents.file_analysis_agent import FileAnalysisAgent
 from ..reports.report_generator import ReportGenerator
@@ -45,6 +46,10 @@ class OrchestratorEngine:
         self._codebase_indexer = None
         self._cached_analysis_result = None  # Store cached analysis for chat mode
         self.session_id = session_id
+        
+        # Initialize shared memory for cross-codebase context
+        self.shared_memory = SharedMemory()
+        logger.info("Initialized shared memory for cross-codebase context")
 
     def initialize_agents(
         self,
@@ -69,9 +74,10 @@ class OrchestratorEngine:
                 use_parallel=use_parallel,
                 custom_system_prompt=custom_system_prompt,
                 has_indexed_codebase=self.has_indexed_codebase,
-                session_id=self.session_id
+                session_id=self.session_id,
+                shared_memory=self.shared_memory
             )
-            self.file_analysis_agent = FileAnalysisAgent(full_config.agent)
+            self.file_analysis_agent = FileAnalysisAgent(full_config.agent, shared_memory=self.shared_memory)
             
             logger.info(f"Orchestrator agents initialized successfully for {self.mode} mode")
             
@@ -131,6 +137,10 @@ class OrchestratorEngine:
         self.analysis_results = []
         self.analyzed_files = set()
         
+        # Clear shared memory at the start of each analysis
+        self.shared_memory.clear()
+        logger.info("Shared memory cleared for new analysis session")
+        
         # Create the file analysis handler that will be called by the orchestrator
         async def file_analysis_handler(file_path: str, analysis_focus: str = "general", 
                                       use_enhanced: bool = True) -> Dict[str, Any]:
@@ -144,7 +154,8 @@ class OrchestratorEngine:
             repository_context = {
                 'total_files': tree_data['statistics']['total_files'],
                 'main_languages': list(tree_data['statistics']['file_extensions'].keys())[:5],
-                'project_type': self._detect_project_type(tree_data)
+                'project_type': self._detect_project_type(tree_data),
+                'shared_memory': self.shared_memory
             }
             
             # Add user question context for chat mode
@@ -225,7 +236,8 @@ class OrchestratorEngine:
             repository_context = {
                 'total_files': tree_data['statistics']['total_files'],
                 'main_languages': list(tree_data['statistics']['file_extensions'].keys())[:5],
-                'project_type': self._detect_project_type(tree_data)
+                'project_type': self._detect_project_type(tree_data),
+                'shared_memory': self.shared_memory
             }
             
             # Add user question context for chat mode
@@ -301,7 +313,8 @@ class OrchestratorEngine:
                 repository_context = {
                     'total_files': tree_data['statistics']['total_files'],
                     'main_languages': list(tree_data['statistics']['file_extensions'].keys())[:5],
-                    'project_type': self._detect_project_type(tree_data)
+                    'project_type': self._detect_project_type(tree_data),
+                    'shared_memory': self.shared_memory
                 }
                 answer = await self.file_analysis_agent.answer_file_query(
                     file_path=file_path,
@@ -341,7 +354,8 @@ class OrchestratorEngine:
                     'total_files': tree_data['statistics']['total_files'],
                     'main_languages': list(tree_data['statistics']['file_extensions'].keys())[:5],
                     'project_type': self._detect_project_type(tree_data),
-                    'search_results': len(results.get('merged', []))
+                    'search_results': len(results.get('merged', [])),
+                    'shared_memory': self.shared_memory
                 }
                 
                 # Format the answer from search results
