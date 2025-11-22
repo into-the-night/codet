@@ -19,7 +19,7 @@ from .core.config import get_settings
 from .core.analysis_engine import AnalysisEngine
 from .core.orchestrator_engine import OrchestratorEngine
 from .codebase_indexer import MultiLanguageCodebaseParser, QdrantCodebaseIndexer
-from .utils import FileFilter, RepoSizeChecker
+from .utils import FileFilter, RepoSizeChecker, load_and_summarize_rules_sync
 
 
 console = Console()
@@ -95,7 +95,8 @@ def main():
 @click.option('--collection', default=None, help='📦 Qdrant collection name (used with --index)')
 @click.option('--qdrant-url', default=None, help='🌐 Qdrant server URL (used with --index)')
 @click.option('--qdrant-api-key', default=None, help='🔑 Qdrant API key (used with --index)')
-def analyze(path, output, format, config, use_parallel_agents, use_local, ollama_model, index, collection, qdrant_url, qdrant_api_key):
+@click.option('--rules', '-r', multiple=True, type=click.Path(exists=True, dir_okay=False), help='📋 Custom rule markdown files (can be specified multiple times)')
+def analyze(path, output, format, config, use_parallel_agents, use_local, ollama_model, index, collection, qdrant_url, qdrant_api_key, rules):
     """🎯 Analyze code quality using intelligent orchestrator flow
     
     Uses an intelligent orchestrator that strategically selects files to analyze
@@ -133,13 +134,13 @@ def analyze(path, output, format, config, use_parallel_agents, use_local, ollama
             temp_config_path = f.name
         
         config_path = Path(temp_config_path)
+        settings = get_settings(config_path)
     else:
         llm_mode = "Cloud (Gemini)"
-        llm_model = settings.gemini_model
         config_path = Path(config) if config else None
+        settings = get_settings(config_path)
+        llm_model = settings.gemini_model
     
-    settings = get_settings(config_path)
-
     
     # Check if path is a file, if so create temp directory and copy file
     if path.is_file():
@@ -250,6 +251,21 @@ def analyze(path, output, format, config, use_parallel_agents, use_local, ollama
             else:
                 console.print("[yellow]⚠️  No supported files found to index[/yellow]\n")
     
+    # Load and summarize custom rules if provided
+    custom_rules_content = None
+    if rules:
+        console.print(f"[cyan]📋 Loading {len(rules)} custom rule file(s)...[/cyan]")
+        from .core.config import AgentConfig
+        
+        # Create a temporary AgentConfig for rule summarization
+        temp_config = AgentConfig(settings)
+        custom_rules_content = load_and_summarize_rules_sync(list(rules), temp_config)
+        
+        if custom_rules_content:
+            console.print("[green]✅ Custom rules loaded and summarized successfully[/green]\n")
+        else:
+            console.print("[yellow]⚠️  No valid custom rules found[/yellow]\n")
+    
     with Progress(
         SpinnerColumn(style="cyan"),
         TextColumn("[bold cyan]{task.description}[/bold cyan]"),
@@ -266,7 +282,8 @@ def analyze(path, output, format, config, use_parallel_agents, use_local, ollama
             config_path,
             use_parallel=use_parallel_agents,
             has_indexed_codebase=index or needs_indexing,
-            collection_name=collection
+            collection_name=collection,
+            custom_rules=custom_rules_content
         )
         
         if not engine.enable_orchestrator:

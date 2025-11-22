@@ -32,7 +32,19 @@ class FileAnalysisAgent(BaseAgent):
     @property
     def system_prompt(self) -> str:
         """System prompt for file analysis"""
-        return """You are a specialized code analysis agent that analyzes individual files for quality issues.
+        prompt = ""
+        
+        # Prepend custom rules if provided (highest priority)
+        if hasattr(self.config, 'custom_rules') and self.config.custom_rules:
+            prompt += """CUSTOM ANALYSIS RULES (HIGHEST PRIORITY):
+The user has provided the following custom rules for analyzing this codebase.
+These rules take precedence and should be followed carefully:
+
+"""
+            prompt += self.config.custom_rules
+            prompt += "\n\n" + "="*80 + "\n\n"
+        
+        prompt += """You are a specialized code analysis agent that analyzes individual files for quality issues.
 
 For each issue found, provide:
 - Clear, actionable description with specific line number
@@ -61,6 +73,8 @@ When analyzing files, if you discover functions/classes/logic that needs verific
 Make action items specific with function/class names and relevant file paths when possible.
 
 Prioritize high-impact issues that affect security, performance, or maintainability."""
+        
+        return prompt
 
     @property
     def agent_name(self) -> str:

@@ -28,12 +28,18 @@ class AnalysisEngine:
             config_path: Optional[Path] = None,
             use_parallel: bool = True,
             has_indexed_codebase: bool = False, 
-            collection_name: Optional[str] = None
+            collection_name: Optional[str] = None,
+            custom_rules: Optional[str] = None
         ):
         """Enable orchestrator-powered analysis (main analysis method)"""
         try:
             full_config = Config.load(config_path)
             full_config.validate()
+            
+            # Inject custom rules into agent config if provided
+            if custom_rules:
+                full_config.agent.custom_rules = custom_rules
+                logger.info("Custom rules loaded into agent configuration")
             
             # Use standard orchestrator
             logger.info("Using orchestrator with parallel file analysis support")

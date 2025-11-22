@@ -28,34 +28,34 @@ class RedisClient:
         try:
             # Create connection pool
             if self.config.redis_url:
-                # Check if SSL is needed (common for cloud Redis providers)
-                use_ssl = (
-                    self.config.port == 28510 or  # Common Heroku Redis SSL port
-                    'heroku' in self.config.host.lower() or
-                    'amazonaws' in self.config.host.lower() or
-                    'redis.cloud' in self.config.host.lower()
-                )
+                # Use from_url to handle parsing of all connection parameters including SSL/TLS
                 pool_kwargs = {
-                    'host': self.config.host,
-                    'port': self.config.port,
-                    'db': self.config.db,
-                    'password': self.config.password,
                     'decode_responses': self.config.decode_responses,
                     'socket_connect_timeout': self.config.socket_connect_timeout,
                     'socket_timeout': self.config.socket_timeout,
                     'retry_on_timeout': self.config.retry_on_timeout,
                     'max_connections': self.config.max_connections
                 }
-                # Add SSL configuration if needed
-                if use_ssl:
+                
+                # Handle special case for Heroku/AWS/Cloud Redis that might need SSL enforced
+                # even if the URL scheme is redis:// (though rediss:// is preferred)
+                use_ssl = (
+                    self.config.port == 28510 or  # Common Heroku Redis SSL port
+                    'heroku' in self.config.host.lower() or
+                    'amazonaws' in self.config.host.lower() or
+                    'redis.cloud' in self.config.host.lower()
+                )
+                
+                if use_ssl and not self.config.redis_url.startswith('rediss://'):
                     pool_kwargs['connection_class'] = redis.SSLConnection
                     pool_kwargs['ssl_cert_reqs'] = "none"
-                    logger.info("Using SSL connection for Redis")
-                                
-                # Create connection pool
-                self._pool = ConnectionPool(**pool_kwargs)
+                    logger.info("Enforcing SSL connection for Cloud Redis")
 
-                self._client = redis.StrictRedis(connection_pool=self._pool)
+                self._pool = ConnectionPool.from_url(
+                    self.config.redis_url,
+                    **pool_kwargs
+                )
+                self._client = redis.Redis(connection_pool=self._pool)
             
             else:
                 # Fall back to individual connection parameters
