@@ -16,6 +16,8 @@ from ..core.config import AgentConfig
 from ..core.shared_memory import SharedMemory
 from ..analyzers.analyzer import CodeIssue, IssueCategory, IssueSeverity
 from ..core.repository_tree import RepositoryTreeConstructor as TreeConstructor
+from ..core.rules_rag import RulesRAG
+from ..utils.symbol_extractor import extract_symbols
 
 logger = logging.getLogger(__name__)
 
@@ -34,8 +36,10 @@ class FileAnalysisAgent(BaseAgent):
         """System prompt for file analysis"""
         prompt = ""
         
-        # Prepend custom rules if provided (highest priority)
-        if hasattr(self.config, 'custom_rules') and self.config.custom_rules:
+        # Note: Custom rules are now injected per-file via RAG in the prompt builder
+        # This keeps the system prompt clean and allows context-specific rules
+        # Legacy support: if custom_rules are set directly (non-RAG mode), use them
+        if hasattr(self.config, 'custom_rules') and self.config.custom_rules and not hasattr(self.config, 'rules_rag'):
             prompt += """CUSTOM ANALYSIS RULES (HIGHEST PRIORITY):
 The user has provided the following custom rules for analyzing this codebase.
 These rules take precedence and should be followed carefully:
@@ -256,6 +260,45 @@ FILES:
 ANALYSIS FOCUS: {analysis_focus.upper()}
 {focus_instructions}"""
 
+        # Query and inject relevant custom rules if RulesRAG is available
+        if hasattr(self.config, 'rules_rag') and self.config.rules_rag is not None:
+            try:
+                # Extract function and class names from file content
+                functions, classes = extract_symbols(file_path, content)
+                
+                # Detect if this is a test file
+                is_test = self._is_test_file(file_path)
+                
+                # Query relevant rules
+                relevant_rules = self.config.rules_rag.query_rules(
+                    file_path=file_path,
+                    functions=functions,
+                    classes=classes,
+                    is_test=is_test,
+                    limit=5  # Get top 5 most relevant rules
+                )
+                
+                if relevant_rules:
+                    logger.info(f"Retrieved {len(relevant_rules)} relevant rules for {file_path}")
+                    
+                    rules_text = "\n\n".join([
+                        f"**Rule {i+1}** [{rule['category']}/{rule.get('subcategory', '')}] (Priority: {rule['priority']})\n{rule['content']}"
+                        for i, rule in enumerate(relevant_rules)
+                    ])
+                    
+                    prompt += f"""
+
+RELEVANT CUSTOM RULES (HIGHEST PRIORITY):
+These specific rules have been selected as most relevant for this file based on its context.
+Follow these rules carefully during analysis:
+
+{rules_text}
+
+{"="*80}
+"""
+            except Exception as e:
+                logger.error(f"Error querying rules RAG: {e}")
+        
         # Add shared memory context if available
         if shared_memory and len(shared_memory) > 0:
             memory_items = shared_memory.format_items()

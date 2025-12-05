@@ -251,20 +251,32 @@ def analyze(path, output, format, config, use_parallel_agents, use_local, ollama
             else:
                 console.print("[yellow]⚠️  No supported files found to index[/yellow]\n")
     
-    # Load and summarize custom rules if provided
-    custom_rules_content = None
+    
+    # Load and index custom rules if provided
+    rules_rag = None
     if rules:
-        console.print(f"[cyan]📋 Loading {len(rules)} custom rule file(s)...[/cyan]")
-        from .core.config import AgentConfig
+        console.print(f"[cyan]📋 Loading and indexing {len(rules)} custom rule file(s)...[/cyan]")
+        from .core.rules_rag import RulesRAG
         
-        # Create a temporary AgentConfig for rule summarization
-        temp_config = AgentConfig(settings)
-        custom_rules_content = load_and_summarize_rules_sync(list(rules), temp_config)
-        
-        if custom_rules_content:
-            console.print("[green]✅ Custom rules loaded and summarized successfully[/green]\n")
-        else:
-            console.print("[yellow]⚠️  No valid custom rules found[/yellow]\n")
+        try:
+            # Create RulesRAG instance
+            # Use in-memory for simplicity, or Qdrant if available
+            rules_rag = RulesRAG(
+                collection_name="codet_custom_rules",
+                qdrant_url=qdrant_url if needs_indexing else None,
+                qdrant_api_key=qdrant_api_key if needs_indexing else None,
+                use_memory=not needs_indexing  # Use in-memory if not using Qdrant for codebase
+            )
+            
+            # Index rules from files
+            rules_rag.index_rules_from_files(list(rules))
+            
+            num_rules = rules_rag.get_collection_size()
+            console.print(f"[green]✅ Indexed {num_rules} rule chunks successfully[/green]\n")
+        except Exception as e:
+            logger.error(f"Error indexing custom rules: {e}")
+            console.print(f"[yellow]⚠️  Failed to index custom rules: {e}[/yellow]\n")
+            rules_rag = None
     
     with Progress(
         SpinnerColumn(style="cyan"),
@@ -283,7 +295,7 @@ def analyze(path, output, format, config, use_parallel_agents, use_local, ollama
             use_parallel=use_parallel_agents,
             has_indexed_codebase=index or needs_indexing,
             collection_name=collection,
-            custom_rules=custom_rules_content
+            rules_rag=rules_rag  # Pass RulesRAG instance instead of text
         )
         
         if not engine.enable_orchestrator:
