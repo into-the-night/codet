@@ -92,7 +92,7 @@ class RulesRAG:
             logger.error(f"Error creating collection: {e}")
             raise
     
-    def chunk_rules(self, rules_content: str, source_file: str = "custom_rules") -> List[RuleChunk]:
+    def chunk_rules(self, rules_content: str, source_file: str) -> List[RuleChunk]:
         """
         Chunk markdown rules into semantic chunks with metadata
         
@@ -419,12 +419,10 @@ class RulesRAG:
         """
         # Build semantic query from file context
         query_text = self._build_query_context(file_path, functions, classes, is_test)
-        
+        logger.info(f"Querying rules for {file_path}: {query_text}")
+        print(f"Querying rules for {file_path}: {query_text}")
         # Generate query embedding
         query_embedding = self.embedding_model.encode(query_text)
-        
-        # For now, don't use metadata filters - rely on semantic search
-        # This gives better results as rules might be general
         
         # Perform search
         results = self.client.search(
@@ -433,7 +431,8 @@ class RulesRAG:
             limit=limit * 2,  # Get more results for re-ranking
             with_payload=True
         )
-        
+        logger.info(f"Found {len(results)} relevant rules for {file_path}")
+        print(f"Rules query result: {results}")
         # Re-rank by relevance and priority
         ranked_results = self._rerank_results(results, file_path, functions, classes)
         
