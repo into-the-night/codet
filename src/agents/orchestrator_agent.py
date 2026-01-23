@@ -72,19 +72,7 @@ class OrchestratorAgent(BaseAgent):
     
     def _get_analysis_system_prompt(self) -> str:
         """Default system prompt for analysis mode"""
-        prompt = ""
-        
-        # Prepend custom rules if provided (highest priority)
-        if hasattr(self.config, 'custom_rules') and self.config.custom_rules:
-            prompt += """CUSTOM ANALYSIS RULES (HIGHEST PRIORITY):
-The user has provided the following custom rules for analyzing this codebase.
-These rules take precedence and should be followed carefully:
-
-"""
-            prompt += self.config.custom_rules
-            prompt += "\n\n" + "="*80 + "\n\n"
-        
-        prompt += """You are the main orchestrator for code analysis. Strategically select and analyze files using the provided tools.
+        prompt = """You are the main orchestrator for code analysis. Strategically select and analyze files using the provided tools.
 
 WORKFLOW:
 1. Use tools through the system's tool-calling interface (NOT Python code)

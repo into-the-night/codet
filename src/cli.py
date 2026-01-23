@@ -173,15 +173,15 @@ def analyze(path, output, format, config, use_parallel_agents, use_local, ollama
         f"[bold cyan]🤖 LLM Mode:[/bold cyan] {llm_mode} ({llm_model})"
     )
     
+    qdrant_url = qdrant_url or settings.qdrant_url
+    qdrant_api_key = qdrant_api_key or settings.qdrant_api_key
+    if not collection:
+        if path == Path('.'):
+            collection = Path.cwd().name  # Use current directory name
+        else:
+            collection = path
+    collection = Path(str(collection).replace('.', '_').replace('/', '_').replace('\\', '_'))
     if needs_indexing:
-        qdrant_url = qdrant_url or settings.qdrant_url
-        qdrant_api_key = qdrant_api_key or settings.qdrant_api_key
-        if not collection:
-            if path == Path('.'):
-                collection = Path.cwd().name  # Use current directory name
-            else:
-                collection = path
-        collection = Path(str(collection).replace('.', '_').replace('/', '_').replace('\\', '_'))
         info_text += f"\n[bold cyan]🔍 RAG Mode:[/bold cyan] Enabled (Collection: {collection})"
     
     console.print(Panel.fit(
@@ -261,12 +261,11 @@ def analyze(path, output, format, config, use_parallel_agents, use_local, ollama
         
         try:
             # Create RulesRAG instance
-            # Use in-memory for simplicity, or Qdrant if available
             rules_rag = RulesRAG(
-                collection_name="codet_custom_rules",
-                qdrant_url=qdrant_url if needs_indexing else None,
-                qdrant_api_key=qdrant_api_key if needs_indexing else None,
-                use_memory=not needs_indexing  # Use in-memory if not using Qdrant for codebase
+                collection_name=collection,
+                qdrant_url=qdrant_url,
+                qdrant_api_key=qdrant_api_key,
+                use_memory=False
             )
             
             # Index rules from files

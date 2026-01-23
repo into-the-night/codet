@@ -34,21 +34,7 @@ class FileAnalysisAgent(BaseAgent):
     @property
     def system_prompt(self) -> str:
         """System prompt for file analysis"""
-        prompt = ""
-        
-        # Note: Custom rules are now injected per-file via RAG in the prompt builder
-        # This keeps the system prompt clean and allows context-specific rules
-        # Legacy support: if custom_rules are set directly (non-RAG mode), use them
-        if hasattr(self.config, 'custom_rules') and self.config.custom_rules and not hasattr(self.config, 'rules_rag'):
-            prompt += """CUSTOM ANALYSIS RULES (HIGHEST PRIORITY):
-The user has provided the following custom rules for analyzing this codebase.
-These rules take precedence and should be followed carefully:
-
-"""
-            prompt += self.config.custom_rules
-            prompt += "\n\n" + "="*80 + "\n\n"
-        
-        prompt += """You are a specialized code analysis agent that analyzes individual files for quality issues.
+        prompt ="""You are a specialized code analysis agent that analyzes individual files for quality issues.
 
 For each issue found, provide:
 - Clear, actionable description with specific line number
@@ -156,6 +142,8 @@ Prioritize high-impact issues that affect security, performance, or maintainabil
             shared_memory = repository_context['shared_memory']
         elif self.shared_memory:
             shared_memory = self.shared_memory
+
+        print(f"shared memory: {shared_memory}")
         
         full_path = root_path / file_path
         
@@ -186,6 +174,7 @@ Prioritize high-impact issues that affect security, performance, or maintainabil
                 shared_memory=shared_memory
             )
             
+            print(f"file analysis prompt: {prompt}")
             # Generate structured analysis
             try:
                 structured_response = await self.generate_structured_response(
@@ -235,7 +224,7 @@ Prioritize high-impact issues that affect security, performance, or maintainabil
         """Build analysis prompt for a specific file"""
         file_extension = Path(file_path).suffix.lower()
         language = self._get_language(file_extension)
-        all_files = TreeConstructor.get_file_list(repository_context['tree'])
+        all_files = TreeConstructor.get_file_list({'tree': repository_context['tree']})
         
         # Truncate very long files
         lines = content.splitlines()
@@ -280,7 +269,7 @@ ANALYSIS FOCUS: {analysis_focus.upper()}
                 
                 if relevant_rules:
                     logger.info(f"Retrieved {len(relevant_rules)} relevant rules for {file_path}")
-                    
+
                     rules_text = "\n\n".join([
                         f"**Rule {i+1}** [{rule['category']}/{rule.get('subcategory', '')}] (Priority: {rule['priority']})\n{rule['content']}"
                         for i, rule in enumerate(relevant_rules)
@@ -580,10 +569,14 @@ Answer directly citing exact code. If not found in this file, say so and suggest
             file_extension = Path(file_path).suffix.lower()
             is_test_file = self._is_test_file(file_path)
             
+            print(f"shared memory: {shared_memory}")
+
             # Build enhanced analysis prompt
             prompt = self._build_enhanced_analysis_prompt(
                 file_path, content, analysis_focus, repository_context, is_test_file, shared_memory
             )
+
+            print(f"enhanced prompt: {prompt}")
             
             # Generate structured analysis with enhanced schema
             structured_response = await self.generate_structured_response(
@@ -602,8 +595,8 @@ Answer directly citing exact code. If not found in this file, say so and suggest
             if structured_response.issues:
                 code_issues = self._convert_to_code_issues(structured_response.issues, full_path)
                 structured_response.issues = code_issues
-            
-            # Add next steps and memory items to shared memory if available
+
+            # Add memory items to shared memory if available
             if shared_memory:
                 all_memory_items = []
                 if hasattr(structured_response, 'memory_items') and structured_response.memory_items:
@@ -611,9 +604,6 @@ Answer directly citing exact code. If not found in this file, say so and suggest
                 
                 if all_memory_items:
                     shared_memory.add_items(all_memory_items)
-                    logger.info(f"Added {len(all_memory_items)} memory items to shared memory from {file_path}")
-            
-            logger.info(f"Enhanced analysis complete: {len(structured_response.issues)} issues")
             
             return structured_response
             
@@ -659,9 +649,51 @@ Path: {file_path} ({len(lines)} lines)
 ANALYSIS FOCUS: {analysis_focus.upper()}
 {focus_instructions}"""
 
+        # Query and inject relevant custom rules if RulesRAG is available
+        if hasattr(self.config, 'rules_rag') and self.config.rules_rag is not None:
+            try:
+                # Extract function and class names from file content
+                functions, classes = extract_symbols(file_path, content)
+                
+                # Query relevant rules
+                relevant_rules = self.config.rules_rag.query_rules(
+                    file_path=file_path,
+                    functions=functions,
+                    classes=classes,
+                    is_test=is_test_file,
+                    limit=5
+                )
+                
+                if relevant_rules:
+                    logger.info(f"Retrieved {len(relevant_rules)} relevant rules for {file_path}")
+                    # Log rules
+                    for i, rule in enumerate(relevant_rules):
+                         logger.info(f"Rule {i+1}: [{rule['category']}] {rule['content'][:100]}...")
+                    
+                    rules_text = "\n\n".join([
+                        f"**Rule {i+1}** [{rule['category']}/{rule.get('subcategory', '')}] (Priority: {rule['priority']})\n{rule['content']}"
+                        for i, rule in enumerate(relevant_rules)
+                    ])
+                    
+                    prompt += f"""
+
+RELEVANT CUSTOM RULES (HIGHEST PRIORITY):
+These specific rules have been selected as most relevant for this file based on its context.
+Follow these rules carefully during analysis:
+
+{rules_text}
+
+{"="*80}
+"""
+            except Exception as e:
+                logger.error(f"Error querying rules RAG in enhanced analysis: {e}")
+
         # Add shared memory context if available
         if shared_memory and len(shared_memory) > 0:
             memory_items = shared_memory.format_items()
+            logger.info(f"Injecting {len(shared_memory)} memory items into prompt for {file_path}")
+            print("Memory items: ", memory_items)
+            logger.debug(f"Memory content: {memory_items}")
             prompt += f"""
 
 SHARED MEMORY - Existing Context:

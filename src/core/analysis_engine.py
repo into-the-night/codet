@@ -29,18 +29,12 @@ class AnalysisEngine:
             use_parallel: bool = True,
             has_indexed_codebase: bool = False, 
             collection_name: Optional[str] = None,
-            custom_rules: Optional[str] = None,
             rules_rag=None  # RulesRAG instance for context-aware rule retrieval
         ):
         """Enable orchestrator-powered analysis (main analysis method)"""
         try:
             full_config = Config.load(config_path)
             full_config.validate()
-            
-            # Inject custom rules into agent config if provided (legacy non-RAG mode)
-            if custom_rules and not rules_rag:
-                full_config.agent.custom_rules = custom_rules
-                logger.info("Custom rules loaded into agent configuration (non-RAG mode)")
             
             # Inject RulesRAG instance if provided (preferred mode)
             if rules_rag:

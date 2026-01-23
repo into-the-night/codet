@@ -107,7 +107,7 @@ def get_settings(config_path: Optional[str] = None) -> Settings:
 # Compatibility layer for old code
 class AgentConfig:
     """Compatibility wrapper for agent config"""
-    def __init__(self, s: Settings, custom_rules: Optional[str] = None):
+    def __init__(self, s: Settings):
         self.temperature = s.agent_temperature
         self.max_tokens = s.agent_max_tokens
         self.timeout = s.agent_timeout
@@ -120,7 +120,6 @@ class AgentConfig:
         self.qdrant_url = s.qdrant_url
         self.qdrant_api_key = s.qdrant_api_key
         self.use_memory = s.use_memory
-        self.custom_rules = custom_rules  # Custom analysis rules from user-provided files
 
 
 class RedisConfig:
@@ -149,7 +148,6 @@ class AnalyzerConfig:
         self.max_workers = s.max_workers
         self.severity_threshold = s.severity_threshold
         self.ignore_patterns = []
-        self.custom_rules = {}
 
 
 class Config:
