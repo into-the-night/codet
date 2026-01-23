@@ -26,7 +26,6 @@ class OrchestratorAgent(BaseAgent):
         config: AgentConfig,
         redis_config: Optional[RedisConfig] = None,
         mode: str = "analysis",
-        use_parallel: bool = True,
         custom_system_prompt: Optional[str] = None,
         has_indexed_codebase: bool = False,
         session_id: Optional[str] = None,
@@ -38,7 +37,6 @@ class OrchestratorAgent(BaseAgent):
         self.max_iterations = 10  # Prevent infinite loops
         self.current_iteration = 0
         self.mode = mode  # 'analysis' or 'chat'
-        self.use_parallel = use_parallel
         self.has_indexed_codebase = has_indexed_codebase  # Track if codebase is indexed
         self.custom_system_prompt = custom_system_prompt  # Allow custom prompts
         self.user_question = None  # Store user question for chat mode
@@ -235,11 +233,9 @@ Examples: "Check if process_order() has proper error handling", "Verify API auth
                 function_prompt += "1. QueryFile(file_path, question) - answer a focused question about a single file\n"
                 function_prompt += "2. AnalyzeFile(file_path, analysis_focus) - deep code-quality analysis when necessary\n"
                 
-                if self.use_parallel:
-                    function_prompt += "3. AnalyzeFilesBatch(files_paths, analysis_focus): Analyze multiple files (3-5 optimal)\n\n"
-                
+ 
                 if self.has_indexed_codebase:
-                    function_prompt += "4. QueryCodebase(question, search_limit) - search the indexed codebase to find patterns and answer cross-file questions\n"
+                    function_prompt += "3. QueryCodebase(question, search_limit) - search the indexed codebase to find patterns and answer cross-file questions\n"
                     function_prompt += "Strategy: Use query_file for specific file questions, query_codebase for cross-file searches.\n"
                 else:
                     function_prompt += "Strategy: Use query_file to answer specific questions about files.\n"
@@ -260,9 +256,6 @@ Examples: "Check if process_order() has proper error handling", "Verify API auth
                     AnalyzeFile,
                     QueryFile
                 ]
-                
-                if self.use_parallel:
-                    function_declarations.append(AnalyzeFilesBatch)
                 
                 if self.has_indexed_codebase:
                     function_declarations.append(QueryCodebase)

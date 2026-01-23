@@ -26,7 +26,6 @@ class AnalysisEngine:
     def enable_analysis(
             self,
             config_path: Optional[Path] = None,
-            use_parallel: bool = True,
             has_indexed_codebase: bool = False, 
             collection_name: Optional[str] = None,
             rules_rag=None  # RulesRAG instance for context-aware rule retrieval
@@ -42,14 +41,14 @@ class AnalysisEngine:
                 logger.info(f"RulesRAG enabled with {rules_rag.get_collection_size()} indexed rules")
             
             # Use standard orchestrator
-            logger.info("Using orchestrator with parallel file analysis support")
+            logger.info("Using orchestrator with sequential file analysis")
             self.orchestrator_engine = OrchestratorEngine(
                 full_config,
                 has_indexed_codebase=has_indexed_codebase,
                 collection_name=collection_name
             )
             
-            self.orchestrator_engine.initialize_agents(config_path, use_parallel=use_parallel)
+            self.orchestrator_engine.initialize_agents(config_path)
             self.enable_orchestrator = True
             logger.info("Orchestrator analysis enabled successfully")
         except Exception as e:

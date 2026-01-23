@@ -20,7 +20,7 @@ class Settings(BaseSettings):
     """Application settings loaded from environment variables"""
     # Gemini configuration (default cloud LLM)
     google_api_key: Optional[str] = Field(None, alias="GOOGLE_API_KEY")
-    gemini_model: str = Field("gemini-2.5-flash", alias="GEMINI_MODEL")
+    gemini_model: str = Field("gemini-2.0-flash-lite", alias="GEMINI_MODEL")
     
     # Agent settings
     agent_temperature: float = Field(0.1, alias="AGENT_TEMPERATURE")

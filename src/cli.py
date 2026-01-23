@@ -89,7 +89,6 @@ def main():
 @click.option('--output', '-o', type=click.Path(), help='💾 Output file for report')
 @click.option('--format', '-f', type=click.Choice(['console', 'json']), default='console', help='📊 Output format')
 @click.option('--config', '-c', type=click.Path(exists=True), help='⚙️  Configuration file path')
-@click.option('--use-parallel-agents', is_flag=True, help='🔃 Use agents parallely (set to False by default to avoid hitting RPM quotas early)')
 @click.option('--use-local', is_flag=True, help='🏠 Use local Ollama LLM instead of Gemini')
 @click.option('--ollama-model', default='llama3.2', help='🤖 Ollama model to use (default: llama3.2)')
 @click.option('--index', is_flag=True, help='🔍 Index codebase for RAG before analysis')
@@ -97,7 +96,7 @@ def main():
 @click.option('--qdrant-url', default=None, help='🌐 Qdrant server URL (used with --index)')
 @click.option('--qdrant-api-key', default=None, help='🔑 Qdrant API key (used with --index)')
 @click.option('--rules', '-r', multiple=True, type=click.Path(exists=True, dir_okay=False), help='📋 Custom rule markdown files (can be specified multiple times)')
-def analyze(path, output, format, config, use_parallel_agents, use_local, ollama_model, index, collection, qdrant_url, qdrant_api_key, rules):
+def analyze(path, output, format, config, use_local, ollama_model, index, collection, qdrant_url, qdrant_api_key, rules):
     """🎯 Analyze code quality using intelligent orchestrator flow
     
     Uses an intelligent orchestrator that strategically selects files to analyze
@@ -169,7 +168,6 @@ def analyze(path, output, format, config, use_parallel_agents, use_local, ollama
 
     info_text = (
         f"[bold cyan]📁 Analyzing:[/bold cyan] {path.absolute()}\n"
-        f"[bold cyan]🔃 Parallel Agents:[/bold cyan] {'Enabled' if use_parallel_agents else 'Disabled'}\n"
         f"[bold cyan]🤖 LLM Mode:[/bold cyan] {llm_mode} ({llm_model})"
     )
     
@@ -285,7 +283,6 @@ def analyze(path, output, format, config, use_parallel_agents, use_local, ollama
     
     engine.enable_analysis(
         config_path,
-        use_parallel=use_parallel_agents,
         has_indexed_codebase=index or needs_indexing,
         collection_name=collection,
         rules_rag=rules_rag  # Pass RulesRAG instance instead of text
@@ -377,7 +374,7 @@ def analyze(path, output, format, config, use_parallel_agents, use_local, ollama
         chat_engine.set_cached_analysis(result)
         progress.update(task, advance=50)
         
-        chat_engine.initialize_agents(config_path, use_parallel=use_parallel_agents)
+        chat_engine.initialize_agents(config_path)
         progress.update(task, advance=50)
         progress.update(task, completed=100)
         

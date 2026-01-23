@@ -57,7 +57,6 @@ class OrchestratorEngine:
     def initialize_agents(
         self,
         config_path: Optional[Path] = None,
-        use_parallel: bool = True,
         custom_system_prompt: Optional[str] = None
         ):
         """Initialize the orchestrator and file analysis agents"""
@@ -74,7 +73,6 @@ class OrchestratorEngine:
                 full_config.agent,
                 full_config.redis,
                 mode=self.mode,
-                use_parallel=use_parallel,
                 custom_system_prompt=custom_system_prompt,
                 has_indexed_codebase=self.has_indexed_codebase,
                 session_id=self.session_id,
@@ -145,8 +143,7 @@ class OrchestratorEngine:
         logger.info("Shared memory cleared for new analysis session")
         
         # Create the file analysis handler that will be called by the orchestrator
-        async def file_analysis_handler(file_path: str, analysis_focus: str = "general", 
-                                      use_enhanced: bool = True) -> Dict[str, Any]:
+        async def file_analysis_handler(file_path: str, analysis_focus: str = "general") -> Dict[str, Any]:
             """Handle file analysis requests from the orchestrator"""
             logger.info(f"Orchestrator requested analysis of: {file_path} (focus: {analysis_focus})")
             
@@ -166,43 +163,8 @@ class OrchestratorEngine:
             if self.mode == "chat" and user_question:
                 repository_context['user_question'] = user_question
             
-            # Use enhanced analysis if requested
-            if use_enhanced and hasattr(self.file_analysis_agent, 'analyze_file_enhanced'):
-                try:
-                    # Use enhanced analysis that returns next steps
-                    result = await self.file_analysis_agent.analyze_file_enhanced(
-                        file_path=file_path,
-                        root_path=root_path,
-                        analysis_focus=analysis_focus,
-                        repository_context=repository_context
-                    )
-                    
-                    # Store issues
-                    self.analysis_results.extend(result.issues)
-                    
-                    # Return enhanced summary including next steps
-                    return {
-                        'success': True,
-                        'file_path': file_path,
-                        'issues_found': len(result.issues),
-                        'analysis_focus': analysis_focus,
-                        'issues': [
-                            {
-                                'title': issue.title,
-                                'category': issue.category.value,
-                                'severity': issue.severity.value,
-                                'line_number': issue.line_number
-                            }
-                            for issue in result.issues
-                        ]
-                    }
-                except Exception as e:
-                    logger.warning(f"Enhanced analysis failed, falling back to standard: {e}")
-                    use_enhanced = False
-            
-            # Standard analysis (fallback or if not enhanced)
-            if not use_enhanced:
-                # Analyze the file
+            # Analyze the file
+            try:
                 issues = await self.file_analysis_agent.analyze_file(
                     file_path=file_path,
                     root_path=root_path,
@@ -229,78 +191,28 @@ class OrchestratorEngine:
                         for issue in issues
                     ]
                 }
+            except Exception as e:
+                logger.error(f"Error analyzing {file_path}: {e}")
+                return {
+                    'success': False,
+                    'file_path': file_path,
+                    'error': str(e)
+                }
         
         # Create batch file analysis handler
         async def batch_file_analysis_handler(file_paths: List[str], analysis_focus: Optional[str] = "general") -> Dict[str, Any]:
             """Handle batch file analysis requests from the orchestrator"""
             logger.info(f"Orchestrator requested batch analysis of {len(file_paths)} files")
             
-            # Get repository context
-            repository_context = {
-                'total_files': tree_data['statistics']['total_files'],
-                'main_languages': list(tree_data['statistics']['file_extensions'].keys())[:5],
-                'tree': tree_data['tree'],
-                'project_type': self._detect_project_type(tree_data),
-                'shared_memory': self.shared_memory
-            }
-            
-            # Add user question context for chat mode
-            if self.mode == "chat" and user_question:
-                repository_context['user_question'] = user_question
-            
-            # Create tasks for parallel analysis
-            analysis_tasks = []
+            results = []
             for file_path in file_paths:
-                
                 # Skip if already analyzed
                 if file_path in self.analyzed_files:
                     continue
-                    
-                self.analyzed_files.add(file_path)
                 
-                # Create analysis task
-                task = self.file_analysis_agent.analyze_file(
-                    file_path=file_path,
-                    root_path=root_path,
-                    analysis_focus=analysis_focus,
-                    repository_context=repository_context
-                )
-                analysis_tasks.append((file_path, task))
-            
-            # Run all analyses in parallel
-            results = []
-            if analysis_tasks:
-                logger.info(f"Running {len(analysis_tasks)} file analyses in parallel")
-                
-                # Execute tasks concurrently
-                task_results = await asyncio.gather(*[task for _, task in analysis_tasks], return_exceptions=True)
-                
-                # Process results
-                for (file_path, _), task_result in zip(analysis_tasks, task_results):
-                    if isinstance(task_result, Exception):
-                        logger.error(f"Error analyzing {file_path}: {task_result}")
-                        results.append({
-                            'success': False,
-                            'file_path': file_path,
-                            'error': str(task_result)
-                        })
-                    else:
-                        issues = task_result
-                        self.analysis_results.extend(issues)
-                        results.append({
-                            'success': True,
-                            'file_path': file_path,
-                            'issues_found': len(issues),
-                            'issues': [
-                                {
-                                    'title': issue.title,
-                                    'category': issue.category.value,
-                                    'severity': issue.severity.value,
-                                    'line_number': issue.line_number
-                                }
-                                for issue in issues
-                            ]
-                        })
+                # Run analysis sequentially
+                result = await file_analysis_handler(file_path, analysis_focus)
+                results.append(result)
             
             return {
                 'success': True,
