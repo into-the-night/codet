@@ -50,6 +50,9 @@ class OrchestratorAgent(BaseAgent):
         # Function handlers - will be set by the analysis engine
         self.function_handlers = {}
         
+        # Event callback for streaming updates
+        self._event_callback = None
+        
     @property
     def system_prompt(self) -> str:
         """System prompt for the orchestrator"""
@@ -181,7 +184,24 @@ Examples: "Check if process_order() has proper error handling", "Verify API auth
             if file_path not in self.analyzed_files:
                 self.analyzed_files.add(file_path)
                 logger.info(f"Analyzing file: {file_path} (focus: {analysis_focus})")
-                return await file_analysis_handler(file_path, analysis_focus)
+                
+                # Emit file analysis start event
+                self._emit_event("file_analysis", {
+                    "message": f"Analyzing {file_path}",
+                    "file_path": file_path,
+                    "focus": analysis_focus
+                })
+                
+                result = await file_analysis_handler(file_path, analysis_focus)
+                
+                # Emit file analysis complete event
+                issues_found = result.get('issues_found', 0) if isinstance(result, dict) else 0
+                self._emit_event("tool_complete", {
+                    "tool_name": "AnalyzeFile",
+                    "summary": f"Found {issues_found} issues in {file_path}"
+                })
+                
+                return result
             else:
                 logger.info(f"File already analyzed: {file_path}")
                 return {
@@ -577,3 +597,21 @@ Be as specific and helpful as possible."""
         except Exception as e:
             logger.error(f"Error generating final answer: {e}")
             return f"I apologize, but I encountered an error while generating the final answer. However, I was able to analyze {len(self.analyzed_files)} files in the repository. Please try rephrasing your question or ask about a specific aspect of the codebase."
+
+    def set_event_callback(self, callback):
+        """
+        Set callback function for streaming real-time events.
+        
+        The callback should accept two arguments:
+        - event_type: str (e.g., 'tool_start', 'tool_complete', 'reasoning', 'memory_update')
+        - data: dict (event-specific data)
+        """
+        self._event_callback = callback
+    
+    def _emit_event(self, event_type: str, data: dict):
+        """Emit an event to the callback if one is set"""
+        if self._event_callback:
+            try:
+                self._event_callback(event_type, data)
+            except Exception as e:
+                logger.error(f"Error emitting event: {e}")

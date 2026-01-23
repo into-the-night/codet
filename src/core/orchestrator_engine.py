@@ -47,6 +47,9 @@ class OrchestratorEngine:
         self._cached_analysis_result = None  # Store cached analysis for chat mode
         self.session_id = session_id
         
+        # Event callback for streaming updates
+        self._event_callback = None
+        
         # Initialize shared memory for cross-codebase context
         self.shared_memory = SharedMemory()
         logger.info("Initialized shared memory for cross-codebase context")
@@ -191,8 +194,7 @@ class OrchestratorEngine:
                                 'line_number': issue.line_number
                             }
                             for issue in result.issues
-                        ],
-                        'next_steps': result.next_steps if result.next_steps else []
+                        ]
                     }
                 except Exception as e:
                     logger.warning(f"Enhanced analysis failed, falling back to standard: {e}")
@@ -311,6 +313,12 @@ class OrchestratorEngine:
 
         # query_file handler: ask a focused question about a file
         async def query_file_handler(file_path: str, question: str) -> Dict[str, Any]:
+            # Emit tool start event
+            self._emit_event("tool_start", {
+                "tool_name": "QueryFile",
+                "args": {"file_path": file_path, "question": question[:30] + "..."}
+            })
+            
             try:
                 repository_context = {
                     'total_files': tree_data['statistics']['total_files'],
@@ -325,13 +333,30 @@ class OrchestratorEngine:
                     question=question,
                     repository_context=repository_context,
                 )
+                
+                # Emit tool complete event
+                self._emit_event("tool_complete", {
+                    "tool_name": "QueryFile",
+                    "summary": f"Answered question about {file_path}"
+                })
+                
                 return {"success": True, "file_path": file_path, "answer": answer}
             except Exception as e:
                 logger.error(f"query_file error for {file_path}: {e}")
+                self._emit_event("tool_error", {
+                    "tool_name": "QueryFile",
+                    "message": str(e)
+                })
                 return {"success": False, "error": str(e)}
         
         # query_codebase handler: search and answer questions using indexed codebase
         async def query_codebase_handler(question: str, search_limit: int = 10) -> Dict[str, Any]:
+            # Emit search event
+            self._emit_event("search", {
+                "query": question[:40],
+                "limit": search_limit
+            })
+            
             try:
                 # Initialize indexer if needed
                 if not hasattr(self, '_codebase_indexer') or self._codebase_indexer is None:
@@ -402,6 +427,12 @@ class OrchestratorEngine:
                 else:
                     answer = "No relevant code found in the indexed codebase for this query."
                 
+                # Emit tool complete event
+                self._emit_event("tool_complete", {
+                    "tool_name": "QueryCodebase",
+                    "summary": f"Found {len(results.get('merged', []))} results"
+                })
+                
                 return {
                     "success": True, 
                     "answer": answer,
@@ -410,6 +441,10 @@ class OrchestratorEngine:
                 }
             except Exception as e:
                 logger.error(f"query_codebase error: {e}")
+                self._emit_event("tool_error", {
+                    "tool_name": "QueryCodebase",
+                    "message": str(e)
+                })
                 return {"success": False, "error": str(e)}
 
         
@@ -558,3 +593,24 @@ class OrchestratorEngine:
     def set_cached_analysis(self, analysis_result: Optional[AnalysisResult]):
         """Set cached analysis result for use in chat mode"""
         self._cached_analysis_result = analysis_result
+    
+    def set_event_callback(self, callback):
+        """
+        Set callback function for streaming real-time events.
+        
+        The callback should accept two arguments:
+        - event_type: str (e.g., 'tool_start', 'tool_complete', 'reasoning', 'memory_update')
+        - data: dict (event-specific data)
+        """
+        self._event_callback = callback
+        # Also set the callback on the orchestrator agent if it exists
+        if self.orchestrator_agent:
+            self.orchestrator_agent.set_event_callback(callback)
+    
+    def _emit_event(self, event_type: str, data: dict):
+        """Emit an event to the callback if one is set"""
+        if self._event_callback:
+            try:
+                self._event_callback(event_type, data)
+            except Exception as e:
+                logger.error(f"Error emitting event: {e}")

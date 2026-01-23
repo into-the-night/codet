@@ -92,3 +92,18 @@ class AnalysisEngine:
             return self.tree_constructor.filter_files_by_extension(tree_data, extensions)
         else:
             return TreeConstructor.get_file_list(tree_data)
+    
+    def set_event_callback(self, callback):
+        """
+        Set callback function for streaming real-time processing events.
+        
+        The callback should accept two arguments:
+        - event_type: str (e.g., 'tool_start', 'tool_complete', 'reasoning', 'memory_update')
+        - data: dict (event-specific data)
+        
+        This forwards to the underlying orchestrator engine.
+        """
+        if self.orchestrator_engine:
+            self.orchestrator_engine.set_event_callback(callback)
+        else:
+            logger.warning("Cannot set event callback: orchestrator engine not initialized")

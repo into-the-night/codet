@@ -20,6 +20,7 @@ from .core.analysis_engine import AnalysisEngine
 from .core.orchestrator_engine import OrchestratorEngine
 from .codebase_indexer import MultiLanguageCodebaseParser, QdrantCodebaseIndexer
 from .utils import FileFilter, RepoSizeChecker, load_and_summarize_rules_sync
+from .utils.cli_status import CLIProcessingStatus, SimpleProcessingStatus
 
 
 console = Console()
@@ -278,35 +279,36 @@ def analyze(path, output, format, config, use_parallel_agents, use_local, ollama
             console.print(f"[yellow]⚠️  Failed to index custom rules: {e}[/yellow]\n")
             rules_rag = None
     
-    with Progress(
-        SpinnerColumn(style="cyan"),
-        TextColumn("[bold cyan]{task.description}[/bold cyan]"),
-        BarColumn(bar_width=40),
-        TaskProgressColumn(),
-        console=console,
-        transient=True
-    ) as progress:
-        task = progress.add_task("🚀 Initializing analysis engine...", total=None)
-
-        engine = AnalysisEngine()
-        
-        engine.enable_analysis(
-            config_path,
-            use_parallel=use_parallel_agents,
-            has_indexed_codebase=index or needs_indexing,
-            collection_name=collection,
-            rules_rag=rules_rag  # Pass RulesRAG instance instead of text
-        )
-        
-        if not engine.enable_orchestrator:
-            console.print("[red]❌ Error: Orchestrator analysis could not be enabled.[/red]")
-            return
-
-        
-        progress.update(task, description="🎯 Orchestrator analyzing files...")
+    # Initialize the analysis engine
+    console.print("[bold cyan]🚀 Initializing analysis engine...[/bold cyan]")
+    
+    engine = AnalysisEngine()
+    
+    engine.enable_analysis(
+        config_path,
+        use_parallel=use_parallel_agents,
+        has_indexed_codebase=index or needs_indexing,
+        collection_name=collection,
+        rules_rag=rules_rag  # Pass RulesRAG instance instead of text
+    )
+    
+    if not engine.enable_orchestrator:
+        console.print("[red]❌ Error: Orchestrator analysis could not be enabled.[/red]")
+        return
+    
+    # Create and use rich processing status for analysis
+    processing_status = CLIProcessingStatus(console=console)
+    
+    # Set up event callback before starting analysis
+    engine.set_event_callback(processing_status.on_event)
+    
+    # Start the processing status display
+    processing_status.start(title="🎯 Orchestrator Analysis")
+    
+    try:
         result = asyncio.run(engine.analyze_repository(path))
-
-        progress.update(task, completed=True)
+    finally:
+        processing_status.stop()
     
     end_time = time.time()
     
@@ -393,6 +395,9 @@ def analyze(path, output, format, config, use_parallel_agents, use_local, ollama
     # Create and persist a single event loop for the chat session
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
+    
+    # Create processing status display
+    processing_status = CLIProcessingStatus(console=console)
 
     # Chat loop
     while True:
@@ -403,26 +408,29 @@ def analyze(path, output, format, config, use_parallel_agents, use_local, ollama
             break
         
         console.print()
-        with Progress(
-            SpinnerColumn(style="cyan"),
-            TextColumn("[bold cyan]🤔 Thinking...[/bold cyan]"),
-            console=console,
-            transient=True
-        ) as progress:
-            task = progress.add_task("Analyzing codebase...", total=None)
+        
+        try:
+            # Start the processing status display
+            processing_status.start(title="🤖 Analyzing your question...")
             
-            try:
-                # Get answer using the persistent loop
-                answer = loop.run_until_complete(chat_engine.answer_question(
-                    question=question,
-                    path=path
-                ))
-                
-                console.print(f"\n[bold green]Codet[/bold green]: {answer}\n")
-                
-            except Exception as e:
-                console.print(f"\n[red]❌ Error: {str(e)}[/red]\n")
-                logger.error(f"Chat error: {e}", exc_info=True)
+            # Set up event callback for real-time updates
+            chat_engine.set_event_callback(processing_status.on_event)
+            
+            # Get answer using the persistent loop
+            answer = loop.run_until_complete(chat_engine.answer_question(
+                question=question,
+                path=path
+            ))
+            
+            # Stop the processing status display
+            processing_status.stop()
+            
+            console.print(f"\n[bold green]Codet[/bold green]: {answer}\n")
+            
+        except Exception as e:
+            processing_status.stop()
+            console.print(f"\n[red]❌ Error: {str(e)}[/red]\n")
+            logger.error(f"Chat error: {e}", exc_info=True)
 
     # Gracefully shutdown the event loop after chat session ends
     try:
