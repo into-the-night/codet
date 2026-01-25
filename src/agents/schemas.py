@@ -42,12 +42,14 @@ class CodeIssueSchema(BaseModel):
 class AnalysisResponseSchema(BaseModel):
     """Schema for the complete analysis response"""
     issues: List[CodeIssueSchema] = Field(description="List of code quality issues found")
+    memory_items: Optional[List[str]] = Field(default_factory=list, description="Action items to add to shared memory for cross-codebase verification (e.g., 'Check if authenticate() has tests in test_auth.py')")
 
 class ChatResponseSchema(BaseModel):
     """Schema for chat mode responses"""
     answer: str = Field(description="The answer to the user's question about the codebase")
     files_to_analyze: Optional[List[str]] = Field(None, description="Files that need to be analyzed to answer the question")
     analysis_complete: bool = Field(False, description="Whether the analysis is complete and ready to provide final answer")
+    memory_items: Optional[List[str]] = Field(default_factory=list, description="Action items to add to shared memory for cross-codebase context")
 
 
 class FileAnalysisRequestSchema(BaseModel):
@@ -67,7 +69,7 @@ class FileAnalysisResultEnhanced(BaseModel):
     """Enhanced file analysis response that includes next steps"""
     file_path: str = Field(description="Path to the analyzed file")
     issues: List[CodeIssueSchema] = Field(default_factory=list, description="Issues found in the file")
-    next_steps: List[str] = Field(default_factory=list, description="Suggested next steps for the orchestrator (e.g., 'check if calculate_total function has tests in test_calculator.py')")
+    memory_items: Optional[List[str]] = Field(default_factory=list, description="Action items to add to shared memory for cross-codebase verification")
     summary: Optional[str] = Field(None, description="Brief summary of the file analysis")
 
 

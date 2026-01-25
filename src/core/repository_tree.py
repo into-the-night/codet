@@ -232,22 +232,26 @@ class RepositoryTreeConstructor:
         
         return stats
     
-    def get_file_list(self, tree_data: Dict[str, Any]) -> List[Dict[str, Any]]:
-        """Extract a flat list of all files from the tree"""
+    @staticmethod
+    def get_file_list(tree_data: Dict[str, Any]) -> List[Dict[str, Any]]:
+        """Extract file list from tree data"""
         files = []
-        
-        def extract_files(node_dict):
-            if node_dict.get('is_file', False):
-                files.append({
-                    'name': node_dict['name'],
-                    'path': node_dict['path'],
-                    'extension': node_dict.get('extension'),
-                    'size': node_dict.get('size', 0),
-                    'modified_time': node_dict.get('modified_time')
-                })
-            elif node_dict.get('is_directory', False):
-                for child in node_dict.get('children', []):
-                    extract_files(child)
+    
+        def extract_files(node, current_path=""):
+            if isinstance(node, dict):
+                # Check if this is a file node
+                if node.get('is_file', False):
+                    files.append({
+                        'path': node.get('path', current_path),
+                        'size': node.get('size', 0),
+                        'extension': node.get('extension', ''),
+                        'name': node.get('name', '')
+                    })
+                # Check if this is a directory node with children
+                elif node.get('is_directory', False) and 'children' in node:
+                    # children is a list, not a dictionary
+                    for child_data in node['children']:
+                        extract_files(child_data, current_path)
         
         extract_files(tree_data['tree'])
         return files
@@ -263,7 +267,8 @@ class RepositoryTreeConstructor:
             if file_info.get('extension', '').lower() in extension_set
         ]
     
-    def get_tree_summary(self, tree_data: Dict[str, Any]) -> str:
+    @staticmethod
+    def get_tree_summary(tree_data: Dict[str, Any]) -> str:
         """Generate a human-readable summary of the repository tree"""
         stats = tree_data['statistics']
         
@@ -285,3 +290,16 @@ class RepositoryTreeConstructor:
                 summary += f"- {file_info['path']}: {size_mb:.2f} MB\n"
         
         return summary
+
+    @staticmethod
+    def format_file_list(files: List[Dict[str, Any]]) -> str:
+        """Format file list for display"""
+        if not files:
+            return "No files available"
+        
+        formatted = []
+        for file_info in files:
+            size_kb = file_info['size'] / 1024 if file_info['size'] > 0 else 0
+            formatted.append(f"- {file_info['path']} ({size_kb:.1f}KB, {file_info['extension']})")
+        
+        return '\n'.join(formatted)

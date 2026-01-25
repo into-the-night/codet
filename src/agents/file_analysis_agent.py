@@ -1,6 +1,7 @@
 """Individual file analysis agent that analyzes specific files"""
 
 import logging
+import json
 from typing import Dict, Any, List, Optional
 from pathlib import Path
 from datetime import datetime
@@ -12,7 +13,11 @@ from .schemas import (
     FileAnalysisResultEnhanced
 )
 from ..core.config import AgentConfig
+from ..core.shared_memory import SharedMemory
 from ..analyzers.analyzer import CodeIssue, IssueCategory, IssueSeverity
+from ..core.repository_tree import RepositoryTreeConstructor as TreeConstructor
+from ..core.rules_rag import RulesRAG
+from ..utils.symbol_extractor import extract_symbols
 
 logger = logging.getLogger(__name__)
 
@@ -20,15 +25,16 @@ logger = logging.getLogger(__name__)
 class FileAnalysisAgent(BaseAgent):
     """Specialized agent for analyzing individual files"""
     
-    def __init__(self, config: AgentConfig):
+    def __init__(self, config: AgentConfig, shared_memory: Optional[SharedMemory] = None):
         super().__init__(config)
         self.max_file_size = 1024 * 1024  # 1MB max file size
         self.max_lines = 1000  # Max lines to analyze per file
+        self.shared_memory = shared_memory  # Shared memory for cross-codebase context
         
     @property
     def system_prompt(self) -> str:
         """System prompt for file analysis"""
-        return """You are a specialized code analysis agent that analyzes individual files for quality issues.
+        prompt ="""You are a specialized code analysis agent that analyzes individual files for quality issues.
 
 For each issue found, provide:
 - Clear, actionable description with specific line number
@@ -45,7 +51,20 @@ Valid Categories (use ONLY these):
 - style: Code formatting issues
 - maintainability: Design issues, coupling, architectural concerns
 
+SHARED MEMORY - Cross-codebase Context:
+When analyzing files, if you discover functions/classes/logic that needs verification elsewhere:
+- Add clear, specific action items to shared memory (append-only)
+- Examples of good action items:
+  * "Check if authenticate() function has tests in test_auth.py"
+  * "Verify error handling for process_payment() is consistent across codebase"
+  * "Ensure API_KEY configuration is validated before use in api_client.py"
+  * "Check if User class methods are properly documented"
+
+Make action items specific with function/class names and relevant file paths when possible.
+
 Prioritize high-impact issues that affect security, performance, or maintainability."""
+        
+        return prompt
 
     @property
     def agent_name(self) -> str:
@@ -117,6 +136,13 @@ Prioritize high-impact issues that affect security, performance, or maintainabil
         """
         logger.info(f"Analyzing file: {file_path} (focus: {analysis_focus})")
         
+        # Get shared memory from repository context if available
+        shared_memory = None
+        if repository_context and 'shared_memory' in repository_context:
+            shared_memory = repository_context['shared_memory']
+        elif self.shared_memory:
+            shared_memory = self.shared_memory
+        
         full_path = root_path / file_path
         
         if not full_path.exists():
@@ -139,7 +165,11 @@ Prioritize high-impact issues that affect security, performance, or maintainabil
             
             # Build analysis prompt
             prompt = self._build_file_analysis_prompt(
-                file_path, content, analysis_focus, repository_context
+                file_path=file_path,
+                content=content,
+                analysis_focus=analysis_focus,
+                repository_context=repository_context,
+                shared_memory=shared_memory
             )
             
             # Generate structured analysis
@@ -157,6 +187,11 @@ Prioritize high-impact issues that affect security, performance, or maintainabil
                 
                 # Convert to CodeIssue objects
                 issues = self._convert_to_code_issues(structured_response.issues, full_path)
+                
+                # Add generated memory items to shared memory
+                if shared_memory and hasattr(structured_response, 'memory_items') and structured_response.memory_items:
+                    shared_memory.add_items(structured_response.memory_items)
+                    logger.info(f"Added {len(structured_response.memory_items)} memory items to shared memory from {file_path}")
                 
             except Exception as e:
                 logger.warning(f"Structured analysis failed, falling back to text parsing: {e}")
@@ -181,10 +216,12 @@ Prioritize high-impact issues that affect security, performance, or maintainabil
     
     def _build_file_analysis_prompt(self, file_path: str, content: str,
                                    analysis_focus: str,
-                                   repository_context: Optional[Dict[str, Any]]) -> str:
+                                   repository_context: Optional[Dict[str, Any]],
+                                   shared_memory: Optional[SharedMemory] = None) -> str:
         """Build analysis prompt for a specific file"""
         file_extension = Path(file_path).suffix.lower()
         language = self._get_language(file_extension)
+        all_files = TreeConstructor.get_file_list({'tree': repository_context['tree']})
         
         # Truncate very long files
         lines = content.splitlines()
@@ -200,13 +237,75 @@ Prioritize high-impact issues that affect security, performance, or maintainabil
         prompt = f"""Analyze this {language} file:
 Path: {file_path} ({len(lines)} lines)
 
+STRUCTURE:
+{json.dumps(repository_context['tree'], indent=2)}
+
+FILES:
+{TreeConstructor.format_file_list(all_files)}...
+
 ANALYSIS FOCUS: {analysis_focus.upper()}
-{focus_instructions}
+{focus_instructions}"""
+
+        # Query and inject relevant custom rules if RulesRAG is available
+        if hasattr(self.config, 'rules_rag') and self.config.rules_rag is not None:
+            try:
+                # Extract function and class names from file content
+                functions, classes = extract_symbols(file_path, content)
+                
+                # Detect if this is a test file
+                is_test = self._is_test_file(file_path)
+                
+                # Query relevant rules
+                relevant_rules = self.config.rules_rag.query_rules(
+                    file_path=file_path,
+                    functions=functions,
+                    classes=classes,
+                    is_test=is_test,
+                    limit=5  # Get top 5 most relevant rules
+                )
+                
+                if relevant_rules:
+                    logger.info(f"Retrieved {len(relevant_rules)} relevant rules for {file_path}")
+
+                    rules_text = "\n\n".join([
+                        f"**Rule {i+1}** [{rule['category']}/{rule.get('subcategory', '')}] (Priority: {rule['priority']})\n{rule['content']}"
+                        for i, rule in enumerate(relevant_rules)
+                    ])
+                    
+                    prompt += f"""
+
+RELEVANT CUSTOM RULES (HIGHEST PRIORITY):
+These specific rules have been selected as most relevant for this file based on its context.
+Follow these rules carefully during analysis:
+
+{rules_text}
+
+{"="*80}
+"""
+            except Exception as e:
+                logger.error(f"Error querying rules RAG: {e}")
+        
+        # Add shared memory context if available
+        if shared_memory and len(shared_memory) > 0:
+            memory_items = shared_memory.format_items()
+            prompt += f"""
+
+SHARED MEMORY - Existing Context:
+{memory_items}
+
+Review these items for context about what needs to be checked across the codebase."""
+        
+        prompt += f"""
 
 FILE CONTENT:
 {self.format_code_snippet(content, language)}{truncated_note}
 
-Provide detailed issues with exact line numbers, clear descriptions, and actionable suggestions."""
+Provide detailed issues with exact line numbers, clear descriptions, and actionable suggestions.
+
+IMPORTANT: Generate memory_items for cross-codebase verification needs:
+- Include specific function/class names and suggested files to check
+- Examples: "Check if authenticate() has tests in test_auth.py", "Verify User class usage in user_service.py"
+"""
         
         return prompt
 
@@ -419,83 +518,6 @@ Answer directly citing exact code. If not found in this file, say so and suggest
         }
         return language_map.get(extension.lower(), 'Unknown')
     
-    async def analyze_file_enhanced(self, file_path: str, 
-                                  root_path: Path,
-                                  analysis_focus: str = "general",
-                                  repository_context: Optional[Dict[str, Any]] = None) -> FileAnalysisResultEnhanced:
-        """
-        Enhanced file analysis that returns results with next steps suggestions
-        
-        Args:
-            file_path: Path to the file to analyze (relative to root)
-            root_path: Path to repository root
-            analysis_focus: Specific focus area for analysis
-            repository_context: Additional context about the repository
-            
-        Returns:
-            FileAnalysisResultEnhanced with issues and next steps
-        """
-        logger.info(f"Enhanced analysis of file: {file_path} (focus: {analysis_focus})")
-        
-        full_path = root_path / file_path
-        
-        if not full_path.exists() or not full_path.is_file():
-            return FileAnalysisResultEnhanced(
-                file_path=file_path,
-                issues=[],
-                summary=f"File not found: {file_path}"
-            )
-        
-        try:
-            # Read file content
-            with open(full_path, 'r', encoding='utf-8') as f:
-                content = f.read()
-            
-            # Check file size
-            if len(content) > self.max_file_size:
-                logger.warning(f"File too large, truncating: {full_path}")
-                content = content[:self.max_file_size] + "\n... [truncated]"
-            
-            # Determine file type
-            file_extension = Path(file_path).suffix.lower()
-            is_test_file = self._is_test_file(file_path)
-            
-            # Build enhanced analysis prompt
-            prompt = self._build_enhanced_analysis_prompt(
-                file_path, content, analysis_focus, repository_context, is_test_file
-            )
-            
-            # Generate structured analysis with enhanced schema
-            structured_response = await self.generate_structured_response(
-                prompt=prompt,
-                response_schema=FileAnalysisResultEnhanced,
-                context={
-                    'file_path': file_path,
-                    'file_size': len(content),
-                    'analysis_focus': analysis_focus,
-                    'is_test_file': is_test_file,
-                    'analysis_type': 'enhanced_file_analysis'
-                }
-            )
-            
-            # Convert issues to CodeIssue objects
-            if structured_response.issues:
-                code_issues = self._convert_to_code_issues(structured_response.issues, full_path)
-                structured_response.issues = code_issues
-            
-            logger.info(f"Enhanced analysis complete: {len(structured_response.issues)} issues, "
-                       f"{len(structured_response.next_steps)} next steps suggested")
-            
-            return structured_response
-            
-        except Exception as e:
-            logger.error(f"Error in enhanced file analysis {file_path}: {e}")
-            return FileAnalysisResultEnhanced(
-                file_path=file_path,
-                issues=[],
-                summary=f"Error analyzing file: {str(e)}"
-            )
-    
     def _is_test_file(self, file_path: str) -> bool:
         """Check if a file is a test file based on naming conventions"""
         test_patterns = [
@@ -505,36 +527,4 @@ Answer directly citing exact code. If not found in this file, say so and suggest
         path_lower = file_path.lower()
         return any(pattern in path_lower for pattern in test_patterns)
     
-    def _build_enhanced_analysis_prompt(self, file_path: str, content: str,
-                                      analysis_focus: str,
-                                      repository_context: Optional[Dict[str, Any]],
-                                      is_test_file: bool) -> str:
-        """Build enhanced analysis prompt that requests next steps"""
-        file_extension = Path(file_path).suffix.lower()
-        language = self._get_language(file_extension)
-        
-        # Truncate very long files
-        lines = content.splitlines()
-        if len(lines) > self.max_lines:
-            content = '\n'.join(lines[:self.max_lines])
-            truncated_note = f"\n\n[Note: File truncated to first {self.max_lines} lines]"
-        else:
-            truncated_note = ""
-        
-        focus_instructions = self._get_focus_instructions(analysis_focus)
-        
-        prompt = f"""Analyze {language} file and suggest next steps:
-Path: {file_path} ({len(lines)} lines)
 
-ANALYSIS FOCUS: {analysis_focus.upper()}
-{focus_instructions}
-
-FILE CONTENT:
-{self.format_code_snippet(content, language)}{truncated_note}
-
-Return FileAnalysisResultEnhanced with:
-- issues: Code issues with line numbers and fixes
-- next_steps: Specific suggestions (e.g., "check if X function has tests in test_X.py")
-- summary: Brief file purpose and quality summary"""
-        
-        return prompt

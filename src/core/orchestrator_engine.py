@@ -10,6 +10,7 @@ import uuid
 from ..analyzers.analyzer import AnalysisResult, CodeIssue
 from ..core.repository_tree import RepositoryTreeConstructor
 from .config import Config
+from .shared_memory import SharedMemory
 from ..agents.orchestrator_agent import OrchestratorAgent
 from ..agents.file_analysis_agent import FileAnalysisAgent
 from ..reports.report_generator import ReportGenerator
@@ -45,11 +46,17 @@ class OrchestratorEngine:
         self._codebase_indexer = None
         self._cached_analysis_result = None  # Store cached analysis for chat mode
         self.session_id = session_id
+        
+        # Event callback for streaming updates
+        self._event_callback = None
+        
+        # Initialize shared memory for cross-codebase context
+        self.shared_memory = SharedMemory()
+        logger.info("Initialized shared memory for cross-codebase context")
 
     def initialize_agents(
         self,
         config_path: Optional[Path] = None,
-        use_parallel: bool = True,
         custom_system_prompt: Optional[str] = None
         ):
         """Initialize the orchestrator and file analysis agents"""
@@ -66,12 +73,12 @@ class OrchestratorEngine:
                 full_config.agent,
                 full_config.redis,
                 mode=self.mode,
-                use_parallel=use_parallel,
                 custom_system_prompt=custom_system_prompt,
                 has_indexed_codebase=self.has_indexed_codebase,
-                session_id=self.session_id
+                session_id=self.session_id,
+                shared_memory=self.shared_memory
             )
-            self.file_analysis_agent = FileAnalysisAgent(full_config.agent)
+            self.file_analysis_agent = FileAnalysisAgent(full_config.agent, shared_memory=self.shared_memory)
             
             logger.info(f"Orchestrator agents initialized successfully for {self.mode} mode")
             
@@ -131,9 +138,12 @@ class OrchestratorEngine:
         self.analysis_results = []
         self.analyzed_files = set()
         
+        # Clear shared memory at the start of each analysis
+        self.shared_memory.clear()
+        logger.info("Shared memory cleared for new analysis session")
+        
         # Create the file analysis handler that will be called by the orchestrator
-        async def file_analysis_handler(file_path: str, analysis_focus: str = "general", 
-                                      use_enhanced: bool = True) -> Dict[str, Any]:
+        async def file_analysis_handler(file_path: str, analysis_focus: str = "general") -> Dict[str, Any]:
             """Handle file analysis requests from the orchestrator"""
             logger.info(f"Orchestrator requested analysis of: {file_path} (focus: {analysis_focus})")
             
@@ -144,51 +154,17 @@ class OrchestratorEngine:
             repository_context = {
                 'total_files': tree_data['statistics']['total_files'],
                 'main_languages': list(tree_data['statistics']['file_extensions'].keys())[:5],
-                'project_type': self._detect_project_type(tree_data)
+                'tree': tree_data['tree'],
+                'project_type': self._detect_project_type(tree_data),
+                'shared_memory': self.shared_memory
             }
             
             # Add user question context for chat mode
             if self.mode == "chat" and user_question:
                 repository_context['user_question'] = user_question
             
-            # Use enhanced analysis if requested
-            if use_enhanced and hasattr(self.file_analysis_agent, 'analyze_file_enhanced'):
-                try:
-                    # Use enhanced analysis that returns next steps
-                    result = await self.file_analysis_agent.analyze_file_enhanced(
-                        file_path=file_path,
-                        root_path=root_path,
-                        analysis_focus=analysis_focus,
-                        repository_context=repository_context
-                    )
-                    
-                    # Store issues
-                    self.analysis_results.extend(result.issues)
-                    
-                    # Return enhanced summary including next steps
-                    return {
-                        'success': True,
-                        'file_path': file_path,
-                        'issues_found': len(result.issues),
-                        'analysis_focus': analysis_focus,
-                        'issues': [
-                            {
-                                'title': issue.title,
-                                'category': issue.category.value,
-                                'severity': issue.severity.value,
-                                'line_number': issue.line_number
-                            }
-                            for issue in result.issues
-                        ],
-                        'next_steps': result.next_steps if result.next_steps else []
-                    }
-                except Exception as e:
-                    logger.warning(f"Enhanced analysis failed, falling back to standard: {e}")
-                    use_enhanced = False
-            
-            # Standard analysis (fallback or if not enhanced)
-            if not use_enhanced:
-                # Analyze the file
+            # Analyze the file
+            try:
                 issues = await self.file_analysis_agent.analyze_file(
                     file_path=file_path,
                     root_path=root_path,
@@ -215,76 +191,28 @@ class OrchestratorEngine:
                         for issue in issues
                     ]
                 }
+            except Exception as e:
+                logger.error(f"Error analyzing {file_path}: {e}")
+                return {
+                    'success': False,
+                    'file_path': file_path,
+                    'error': str(e)
+                }
         
         # Create batch file analysis handler
         async def batch_file_analysis_handler(file_paths: List[str], analysis_focus: Optional[str] = "general") -> Dict[str, Any]:
             """Handle batch file analysis requests from the orchestrator"""
             logger.info(f"Orchestrator requested batch analysis of {len(file_paths)} files")
             
-            # Get repository context
-            repository_context = {
-                'total_files': tree_data['statistics']['total_files'],
-                'main_languages': list(tree_data['statistics']['file_extensions'].keys())[:5],
-                'project_type': self._detect_project_type(tree_data)
-            }
-            
-            # Add user question context for chat mode
-            if self.mode == "chat" and user_question:
-                repository_context['user_question'] = user_question
-            
-            # Create tasks for parallel analysis
-            analysis_tasks = []
+            results = []
             for file_path in file_paths:
-                
                 # Skip if already analyzed
                 if file_path in self.analyzed_files:
                     continue
-                    
-                self.analyzed_files.add(file_path)
                 
-                # Create analysis task
-                task = self.file_analysis_agent.analyze_file(
-                    file_path=file_path,
-                    root_path=root_path,
-                    analysis_focus=analysis_focus,
-                    repository_context=repository_context
-                )
-                analysis_tasks.append((file_path, task))
-            
-            # Run all analyses in parallel
-            results = []
-            if analysis_tasks:
-                logger.info(f"Running {len(analysis_tasks)} file analyses in parallel")
-                
-                # Execute tasks concurrently
-                task_results = await asyncio.gather(*[task for _, task in analysis_tasks], return_exceptions=True)
-                
-                # Process results
-                for (file_path, _), task_result in zip(analysis_tasks, task_results):
-                    if isinstance(task_result, Exception):
-                        logger.error(f"Error analyzing {file_path}: {task_result}")
-                        results.append({
-                            'success': False,
-                            'file_path': file_path,
-                            'error': str(task_result)
-                        })
-                    else:
-                        issues = task_result
-                        self.analysis_results.extend(issues)
-                        results.append({
-                            'success': True,
-                            'file_path': file_path,
-                            'issues_found': len(issues),
-                            'issues': [
-                                {
-                                    'title': issue.title,
-                                    'category': issue.category.value,
-                                    'severity': issue.severity.value,
-                                    'line_number': issue.line_number
-                                }
-                                for issue in issues
-                            ]
-                        })
+                # Run analysis sequentially
+                result = await file_analysis_handler(file_path, analysis_focus)
+                results.append(result)
             
             return {
                 'success': True,
@@ -297,11 +225,19 @@ class OrchestratorEngine:
 
         # query_file handler: ask a focused question about a file
         async def query_file_handler(file_path: str, question: str) -> Dict[str, Any]:
+            # Emit tool start event
+            self._emit_event("tool_start", {
+                "tool_name": "QueryFile",
+                "args": {"file_path": file_path, "question": question[:30] + "..."}
+            })
+            
             try:
                 repository_context = {
                     'total_files': tree_data['statistics']['total_files'],
                     'main_languages': list(tree_data['statistics']['file_extensions'].keys())[:5],
-                    'project_type': self._detect_project_type(tree_data)
+                    'tree': tree_data['tree'],
+                    'project_type': self._detect_project_type(tree_data),
+                    'shared_memory': self.shared_memory
                 }
                 answer = await self.file_analysis_agent.answer_file_query(
                     file_path=file_path,
@@ -309,13 +245,30 @@ class OrchestratorEngine:
                     question=question,
                     repository_context=repository_context,
                 )
+                
+                # Emit tool complete event
+                self._emit_event("tool_complete", {
+                    "tool_name": "QueryFile",
+                    "summary": f"Answered question about {file_path}"
+                })
+                
                 return {"success": True, "file_path": file_path, "answer": answer}
             except Exception as e:
                 logger.error(f"query_file error for {file_path}: {e}")
+                self._emit_event("tool_error", {
+                    "tool_name": "QueryFile",
+                    "message": str(e)
+                })
                 return {"success": False, "error": str(e)}
         
         # query_codebase handler: search and answer questions using indexed codebase
         async def query_codebase_handler(question: str, search_limit: int = 10) -> Dict[str, Any]:
+            # Emit search event
+            self._emit_event("search", {
+                "query": question[:40],
+                "limit": search_limit
+            })
+            
             try:
                 # Initialize indexer if needed
                 if not hasattr(self, '_codebase_indexer') or self._codebase_indexer is None:
@@ -340,8 +293,10 @@ class OrchestratorEngine:
                 repository_context = {
                     'total_files': tree_data['statistics']['total_files'],
                     'main_languages': list(tree_data['statistics']['file_extensions'].keys())[:5],
+                    'tree': tree_data['tree'],
                     'project_type': self._detect_project_type(tree_data),
-                    'search_results': len(results.get('merged', []))
+                    'search_results': len(results.get('merged', [])),
+                    'shared_memory': self.shared_memory
                 }
                 
                 # Format the answer from search results
@@ -384,6 +339,12 @@ class OrchestratorEngine:
                 else:
                     answer = "No relevant code found in the indexed codebase for this query."
                 
+                # Emit tool complete event
+                self._emit_event("tool_complete", {
+                    "tool_name": "QueryCodebase",
+                    "summary": f"Found {len(results.get('merged', []))} results"
+                })
+                
                 return {
                     "success": True, 
                     "answer": answer,
@@ -392,6 +353,10 @@ class OrchestratorEngine:
                 }
             except Exception as e:
                 logger.error(f"query_codebase error: {e}")
+                self._emit_event("tool_error", {
+                    "tool_name": "QueryCodebase",
+                    "message": str(e)
+                })
                 return {"success": False, "error": str(e)}
 
         
@@ -540,3 +505,24 @@ class OrchestratorEngine:
     def set_cached_analysis(self, analysis_result: Optional[AnalysisResult]):
         """Set cached analysis result for use in chat mode"""
         self._cached_analysis_result = analysis_result
+    
+    def set_event_callback(self, callback):
+        """
+        Set callback function for streaming real-time events.
+        
+        The callback should accept two arguments:
+        - event_type: str (e.g., 'tool_start', 'tool_complete', 'reasoning', 'memory_update')
+        - data: dict (event-specific data)
+        """
+        self._event_callback = callback
+        # Also set the callback on the orchestrator agent if it exists
+        if self.orchestrator_agent:
+            self.orchestrator_agent.set_event_callback(callback)
+    
+    def _emit_event(self, event_type: str, data: dict):
+        """Emit an event to the callback if one is set"""
+        if self._event_callback:
+            try:
+                self._event_callback(event_type, data)
+            except Exception as e:
+                logger.error(f"Error emitting event: {e}")

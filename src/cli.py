@@ -19,7 +19,8 @@ from .core.config import get_settings
 from .core.analysis_engine import AnalysisEngine
 from .core.orchestrator_engine import OrchestratorEngine
 from .codebase_indexer import MultiLanguageCodebaseParser, QdrantCodebaseIndexer
-from .utils import FileFilter, RepoSizeChecker
+from .utils import FileFilter, RepoSizeChecker, load_and_summarize_rules_sync
+from .utils.cli_status import CLIProcessingStatus, SimpleProcessingStatus
 
 
 console = Console()
@@ -88,14 +89,14 @@ def main():
 @click.option('--output', '-o', type=click.Path(), help='💾 Output file for report')
 @click.option('--format', '-f', type=click.Choice(['console', 'json']), default='console', help='📊 Output format')
 @click.option('--config', '-c', type=click.Path(exists=True), help='⚙️  Configuration file path')
-@click.option('--use-parallel-agents', is_flag=True, help='🔃 Use agents parallely (set to False by default to avoid hitting RPM quotas early)')
 @click.option('--use-local', is_flag=True, help='🏠 Use local Ollama LLM instead of Gemini')
 @click.option('--ollama-model', default='llama3.2', help='🤖 Ollama model to use (default: llama3.2)')
 @click.option('--index', is_flag=True, help='🔍 Index codebase for RAG before analysis')
 @click.option('--collection', default=None, help='📦 Qdrant collection name (used with --index)')
 @click.option('--qdrant-url', default=None, help='🌐 Qdrant server URL (used with --index)')
 @click.option('--qdrant-api-key', default=None, help='🔑 Qdrant API key (used with --index)')
-def analyze(path, output, format, config, use_parallel_agents, use_local, ollama_model, index, collection, qdrant_url, qdrant_api_key):
+@click.option('--rules', '-r', multiple=True, type=click.Path(exists=True, dir_okay=False), help='📋 Custom rule markdown files (can be specified multiple times)')
+def analyze(path, output, format, config, use_local, ollama_model, index, collection, qdrant_url, qdrant_api_key, rules):
     """🎯 Analyze code quality using intelligent orchestrator flow
     
     Uses an intelligent orchestrator that strategically selects files to analyze
@@ -133,13 +134,13 @@ def analyze(path, output, format, config, use_parallel_agents, use_local, ollama
             temp_config_path = f.name
         
         config_path = Path(temp_config_path)
+        settings = get_settings(config_path)
     else:
         llm_mode = "Cloud (Gemini)"
-        llm_model = settings.gemini_model
         config_path = Path(config) if config else None
+        settings = get_settings(config_path)
+        llm_model = settings.gemini_model
     
-    settings = get_settings(config_path)
-
     
     # Check if path is a file, if so create temp directory and copy file
     if path.is_file():
@@ -167,19 +168,18 @@ def analyze(path, output, format, config, use_parallel_agents, use_local, ollama
 
     info_text = (
         f"[bold cyan]📁 Analyzing:[/bold cyan] {path.absolute()}\n"
-        f"[bold cyan]🔃 Parallel Agents:[/bold cyan] {'Enabled' if use_parallel_agents else 'Disabled'}\n"
         f"[bold cyan]🤖 LLM Mode:[/bold cyan] {llm_mode} ({llm_model})"
     )
     
+    qdrant_url = qdrant_url or settings.qdrant_url
+    qdrant_api_key = qdrant_api_key or settings.qdrant_api_key
+    if not collection:
+        if path == Path('.'):
+            collection = Path.cwd().name  # Use current directory name
+        else:
+            collection = path
+    collection = Path(str(collection).replace('.', '_').replace('/', '_').replace('\\', '_'))
     if needs_indexing:
-        qdrant_url = qdrant_url or settings.qdrant_url
-        qdrant_api_key = qdrant_api_key or settings.qdrant_api_key
-        if not collection:
-            if path == Path('.'):
-                collection = Path.cwd().name  # Use current directory name
-            else:
-                collection = path
-        collection = Path(str(collection).replace('.', '_').replace('/', '_').replace('\\', '_'))
         info_text += f"\n[bold cyan]🔍 RAG Mode:[/bold cyan] Enabled (Collection: {collection})"
     
     console.print(Panel.fit(
@@ -250,34 +250,61 @@ def analyze(path, output, format, config, use_parallel_agents, use_local, ollama
             else:
                 console.print("[yellow]⚠️  No supported files found to index[/yellow]\n")
     
-    with Progress(
-        SpinnerColumn(style="cyan"),
-        TextColumn("[bold cyan]{task.description}[/bold cyan]"),
-        BarColumn(bar_width=40),
-        TaskProgressColumn(),
-        console=console,
-        transient=True
-    ) as progress:
-        task = progress.add_task("🚀 Initializing analysis engine...", total=None)
-
-        engine = AnalysisEngine()
+    
+    # Load and index custom rules if provided
+    rules_rag = None
+    if rules:
+        console.print(f"[cyan]📋 Loading and indexing {len(rules)} custom rule file(s)...[/cyan]")
+        from .core.rules_rag import RulesRAG
         
-        engine.enable_analysis(
-            config_path,
-            use_parallel=use_parallel_agents,
-            has_indexed_codebase=index or needs_indexing,
-            collection_name=collection
-        )
-        
-        if not engine.enable_orchestrator:
-            console.print("[red]❌ Error: Orchestrator analysis could not be enabled.[/red]")
-            return
-
-        
-        progress.update(task, description="🎯 Orchestrator analyzing files...")
+        try:
+            # Create RulesRAG instance
+            rules_rag = RulesRAG(
+                collection_name=collection,
+                qdrant_url=qdrant_url,
+                qdrant_api_key=qdrant_api_key,
+                use_memory=False
+            )
+            
+            # Index rules from files
+            rules_rag.index_rules_from_files(list(rules))
+            
+            num_rules = rules_rag.get_collection_size()
+            console.print(f"[green]✅ Indexed {num_rules} rule chunks successfully[/green]\n")
+        except Exception as e:
+            logger.error(f"Error indexing custom rules: {e}")
+            console.print(f"[yellow]⚠️  Failed to index custom rules: {e}[/yellow]\n")
+            rules_rag = None
+    
+    # Initialize the analysis engine
+    console.print("[bold cyan]🚀 Initializing analysis engine...[/bold cyan]")
+    
+    engine = AnalysisEngine()
+    
+    engine.enable_analysis(
+        config_path,
+        has_indexed_codebase=index or needs_indexing,
+        collection_name=collection,
+        rules_rag=rules_rag  # Pass RulesRAG instance instead of text
+    )
+    
+    if not engine.enable_orchestrator:
+        console.print("[red]❌ Error: Orchestrator analysis could not be enabled.[/red]")
+        return
+    
+    # Create and use rich processing status for analysis
+    processing_status = CLIProcessingStatus(console=console)
+    
+    # Set up event callback before starting analysis
+    engine.set_event_callback(processing_status.on_event)
+    
+    # Start the processing status display
+    processing_status.start(title="🎯 Orchestrator Analysis")
+    
+    try:
         result = asyncio.run(engine.analyze_repository(path))
-
-        progress.update(task, completed=True)
+    finally:
+        processing_status.stop()
     
     end_time = time.time()
     
@@ -347,7 +374,7 @@ def analyze(path, output, format, config, use_parallel_agents, use_local, ollama
         chat_engine.set_cached_analysis(result)
         progress.update(task, advance=50)
         
-        chat_engine.initialize_agents(config_path, use_parallel=use_parallel_agents)
+        chat_engine.initialize_agents(config_path)
         progress.update(task, advance=50)
         progress.update(task, completed=100)
         
@@ -364,6 +391,9 @@ def analyze(path, output, format, config, use_parallel_agents, use_local, ollama
     # Create and persist a single event loop for the chat session
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
+    
+    # Create processing status display
+    processing_status = CLIProcessingStatus(console=console)
 
     # Chat loop
     while True:
@@ -374,26 +404,29 @@ def analyze(path, output, format, config, use_parallel_agents, use_local, ollama
             break
         
         console.print()
-        with Progress(
-            SpinnerColumn(style="cyan"),
-            TextColumn("[bold cyan]🤔 Thinking...[/bold cyan]"),
-            console=console,
-            transient=True
-        ) as progress:
-            task = progress.add_task("Analyzing codebase...", total=None)
+        
+        try:
+            # Start the processing status display
+            processing_status.start(title="🤖 Analyzing your question...")
             
-            try:
-                # Get answer using the persistent loop
-                answer = loop.run_until_complete(chat_engine.answer_question(
-                    question=question,
-                    path=path
-                ))
-                
-                console.print(f"\n[bold green]Codet[/bold green]: {answer}\n")
-                
-            except Exception as e:
-                console.print(f"\n[red]❌ Error: {str(e)}[/red]\n")
-                logger.error(f"Chat error: {e}", exc_info=True)
+            # Set up event callback for real-time updates
+            chat_engine.set_event_callback(processing_status.on_event)
+            
+            # Get answer using the persistent loop
+            answer = loop.run_until_complete(chat_engine.answer_question(
+                question=question,
+                path=path
+            ))
+            
+            # Stop the processing status display
+            processing_status.stop()
+            
+            console.print(f"\n[bold green]Codet[/bold green]: {answer}\n")
+            
+        except Exception as e:
+            processing_status.stop()
+            console.print(f"\n[red]❌ Error: {str(e)}[/red]\n")
+            logger.error(f"Chat error: {e}", exc_info=True)
 
     # Gracefully shutdown the event loop after chat session ends
     try:
