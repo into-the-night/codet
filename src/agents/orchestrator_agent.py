@@ -133,7 +133,6 @@ Examples: "Check if process_order() has proper error handling", "Verify API auth
     
     async def orchestrate_analysis(self, tree_data: Dict[str, Any], 
                                  root_path: Path,
-                                 file_analysis_handler: Callable,
                                  user_question: Optional[str] = None) -> Any:
         """
         Main orchestration method that runs the analysis loop

@@ -147,7 +147,6 @@ class OrchestratorEngine:
             """Handle file analysis requests from the orchestrator"""
             logger.info(f"Orchestrator requested analysis of: {file_path} (focus: {analysis_focus})")
             
-            # Track that we're analyzing this file
             self.analyzed_files.add(file_path)
             
             # Get repository context
@@ -165,6 +164,13 @@ class OrchestratorEngine:
             
             # Analyze the file
             try:
+                # Emit file analysis start event
+                self._emit_event("file_analysis", {
+                    "message": f"Analyzing {file_path}",
+                    "file_path": file_path,
+                    "focus": analysis_focus
+                })
+
                 issues = await self.file_analysis_agent.analyze_file(
                     file_path=file_path,
                     root_path=root_path,
@@ -175,6 +181,12 @@ class OrchestratorEngine:
                 # Store results
                 self.analysis_results.extend(issues)
                 
+                # Emit tool complete event
+                self._emit_event("tool_complete", {
+                    "tool_name": "AnalyzeFile",
+                    "summary": f"Found {len(issues)} issues in {file_path}"
+                })
+                
                 # Return summary for the orchestrator
                 return {
                     'success': True,
@@ -182,7 +194,6 @@ class OrchestratorEngine:
                     'issues_found': len(issues),
                     'analysis_focus': analysis_focus,
                     'issues': [
-
                         {
                             'title': issue.title,
                             'description': issue.description,
@@ -194,10 +205,13 @@ class OrchestratorEngine:
                         }
                         for issue in issues
                     ]
-
                 }
             except Exception as e:
                 logger.error(f"Error analyzing {file_path}: {e}")
+                self._emit_event("tool_error", {
+                    "tool_name": "AnalyzeFile",
+                    "message": str(e)
+                })
                 return {
                     'success': False,
                     'file_path': file_path,
