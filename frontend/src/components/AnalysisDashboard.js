@@ -5,6 +5,7 @@ import './AnalysisDashboard.css';
 import IssueCard from './IssueCard';
 import MetricCard from './MetricCard';
 import LoadingSpinner from './LoadingSpinner';
+import ProcessingStatus from './ProcessingStatus';
 import { formatReportForAI, copyToClipboard } from '../utils/reportFormatter';
 
 const AnalysisDashboard = () => {
@@ -14,21 +15,101 @@ const AnalysisDashboard = () => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [copyStatus, setCopyStatus] = useState('idle'); // 'idle', 'copying', 'success', 'error'
-  
+
   // Chat state
   const [messages, setMessages] = useState([]);
   const [inputValue, setInputValue] = useState('');
   const [isLoadingChat, setIsLoadingChat] = useState(false);
   const [sessionId, setSessionId] = useState(null);
+  const [chatEvents, setChatEvents] = useState([]);
   const messagesEndRef = useRef(null);
+  const socketRef = useRef(null);
 
   useEffect(() => {
     fetchAnalysisData();
   }, [analysisId]); // eslint-disable-line react-hooks/exhaustive-deps
-  
+
   useEffect(() => {
     scrollToBottom();
-  }, [messages]);
+  }, [messages, chatEvents]);
+
+  // WebSocket connection management
+  useEffect(() => {
+    if (!analysisId) return;
+
+    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+    const host = process.env.REACT_APP_API_URL
+      ? process.env.REACT_APP_API_URL.replace(/^https?:\/\//, '')
+      : 'localhost:8000';
+
+    const wsUrl = `${protocol}//${host}/api/ws/chat/${analysisId}`;
+
+    const connect = () => {
+      console.log('Connecting to WebSocket:', wsUrl);
+      const socket = new WebSocket(wsUrl);
+      socketRef.current = socket;
+
+      socket.onopen = () => {
+        console.log('WebSocket connected');
+      };
+
+      socket.onmessage = (event) => {
+        const data = JSON.parse(event.data);
+
+        if (data.type === 'event') {
+          setChatEvents(prev => [...prev, {
+            event_type: data.event_type,
+            data: data.data,
+            timestamp: new Date().toISOString()
+          }]);
+        } else if (data.type === 'answer') {
+          const aiMessage = {
+            id: Date.now(),
+            type: 'ai',
+            content: data.answer,
+            timestamp: data.timestamp,
+            session_id: data.session_id
+          };
+
+          setMessages(prev => [...prev, aiMessage]);
+          setIsLoadingChat(false);
+          setChatEvents([]); // Clear events after answer
+          if (data.session_id) setSessionId(data.session_id);
+        } else if (data.type === 'error') {
+          const errorMessage = {
+            id: Date.now(),
+            type: 'error',
+            content: data.message || 'An error occurred during processing',
+            timestamp: new Date().toISOString(),
+            session_id: null
+          };
+          setMessages(prev => [...prev, errorMessage]);
+          setIsLoadingChat(false);
+          setChatEvents([]);
+        }
+      };
+
+      socket.onclose = (e) => {
+        console.log('WebSocket disconnected', e.reason);
+        // Attempt to reconnect after 3 seconds if not intentionally closed
+        if (e.code !== 1000) {
+          setTimeout(connect, 3000);
+        }
+      };
+
+      socket.onerror = (err) => {
+        console.error('WebSocket error:', err);
+      };
+    };
+
+    connect();
+
+    return () => {
+      if (socketRef.current) {
+        socketRef.current.close(1000, 'Component unmounting');
+      }
+    };
+  }, [analysisId]);
 
   const fetchAnalysisData = async () => {
     try {
@@ -43,12 +124,12 @@ const AnalysisDashboard = () => {
 
   const handleCopyReport = async () => {
     if (!analysisData) return;
-    
+
     setCopyStatus('copying');
     try {
       const formattedReport = formatReportForAI(analysisData);
       const success = await copyToClipboard(formattedReport);
-      
+
       if (success) {
         setCopyStatus('success');
         // Reset status after 3 seconds
@@ -63,11 +144,11 @@ const AnalysisDashboard = () => {
       setTimeout(() => setCopyStatus('idle'), 3000);
     }
   };
-  
+
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   };
-  
+
   const handleSubmit = async (e) => {
     e.preventDefault();
     if (!inputValue.trim() || !analysisId) return;
@@ -82,39 +163,48 @@ const AnalysisDashboard = () => {
     setMessages(prev => [...prev, userMessage]);
     setInputValue('');
     setIsLoadingChat(true);
+    setChatEvents([]); // Reset events for new question
 
-    try {
-      const response = await askQuestion(analysisId, inputValue, sessionId);
+    // Use WebSocket if available
+    if (socketRef.current && socketRef.current.readyState === WebSocket.OPEN) {
+      socketRef.current.send(JSON.stringify({
+        question: inputValue,
+        session_id: sessionId
+      }));
+    } else {
+      // Fallback to HTTP if WebSocket is not connected
+      try {
+        const response = await askQuestion(analysisId, inputValue, sessionId);
 
-      // Save the session ID from the response
-      if (response.session_id) {
-        setSessionId(response.session_id);
+        if (response.session_id) {
+          setSessionId(response.session_id);
+        }
+
+        const aiMessage = {
+          id: Date.now() + 1,
+          type: 'ai',
+          content: response.answer,
+          timestamp: response.timestamp,
+          session_id: response.session_id
+        };
+
+        setMessages(prev => [...prev, aiMessage]);
+      } catch (err) {
+        console.error('Chat error:', err);
+        const errorMessage = {
+          id: Date.now() + 1,
+          type: 'error',
+          content: err.response?.data?.detail || err.message || 'Failed to get response from codet',
+          timestamp: new Date().toISOString(),
+          session_id: null
+        };
+        setMessages(prev => [...prev, errorMessage]);
+      } finally {
+        setIsLoadingChat(false);
       }
-
-      const aiMessage = {
-        id: Date.now() + 1,
-        type: 'ai',
-        content: response.answer,
-        timestamp: response.timestamp,
-        session_id: response.session_id
-      };
-
-      setMessages(prev => [...prev, aiMessage]);
-    } catch (err) {
-      console.error('Chat error:', err);
-      const errorMessage = {
-        id: Date.now() + 1,
-        type: 'error',
-        content: err.response?.data?.detail || err.message || 'Failed to get response from codet',
-        timestamp: new Date().toISOString(),
-        session_id: null
-      };
-      setMessages(prev => [...prev, errorMessage]);
-    } finally {
-      setIsLoadingChat(false);
     }
   };
-  
+
   const formatTimestamp = (timestamp) => {
     return new Date(timestamp).toLocaleTimeString();
   };
@@ -140,7 +230,7 @@ const AnalysisDashboard = () => {
             <div className="error-icon">⚠️</div>
             <h2 className="error-title">Analysis Failed</h2>
             <p className="error-message">{error}</p>
-            <button 
+            <button
               className="retry-button"
               onClick={() => navigate('/')}
             >
@@ -159,11 +249,11 @@ const AnalysisDashboard = () => {
   const extractGithubRepo = () => {
     // Check both github_url and project_path
     const githubUrl = summary?.github_url || summary?.project_path;
-    
+
     if (githubUrl && typeof githubUrl === 'string') {
       // Fix common typos (missing slash after https:)
       const fixedUrl = githubUrl.replace(/^https:\/(?!\/)/, 'https://');
-      
+
       // Extract owner and repo from GitHub URL
       // Example: https://github.com/owner/repo -> { owner: 'owner', repo: 'repo' }
       const match = fixedUrl.match(/github\.com\/([^/]+)\/([^/]+)/);
@@ -184,12 +274,12 @@ const AnalysisDashboard = () => {
     <div className="analysis-dashboard">
       <div className="container">
         <div className="dashboard-header">
-          <button 
+          <button
             className="back-button"
             onClick={() => navigate('/')}
           >
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-              <path d="M19 12H5M12 19L5 12L12 5" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+              <path d="M19 12H5M12 19L5 12L12 5" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
             </svg>
             Back to Analysis
           </button>
@@ -203,7 +293,7 @@ const AnalysisDashboard = () => {
               )}
             </p>
           </div>
-          <button 
+          <button
             className={`copy-report-button ${copyStatus}`}
             onClick={handleCopyReport}
             disabled={copyStatus === 'copying'}
@@ -211,23 +301,23 @@ const AnalysisDashboard = () => {
           >
             {copyStatus === 'copying' && (
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" className="spinning">
-                <path d="M12 2V6M12 18V22M4.93 4.93L7.76 7.76M16.24 16.24L19.07 19.07M2 12H6M18 12H22M4.93 19.07L7.76 16.24M16.24 7.76L19.07 4.93" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                <path d="M12 2V6M12 18V22M4.93 4.93L7.76 7.76M16.24 16.24L19.07 19.07M2 12H6M18 12H22M4.93 19.07L7.76 16.24M16.24 7.76L19.07 4.93" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
               </svg>
             )}
             {copyStatus === 'success' && (
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-                <path d="M20 6L9 17L4 12" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                <path d="M20 6L9 17L4 12" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
               </svg>
             )}
             {copyStatus === 'error' && (
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-                <path d="M18 6L6 18M6 6L18 18" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                <path d="M18 6L6 18M6 6L18 18" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
               </svg>
             )}
             {copyStatus === 'idle' && (
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-                <rect x="9" y="9" width="13" height="13" rx="2" ry="2" stroke="currentColor" strokeWidth="2" fill="none"/>
-                <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" stroke="currentColor" strokeWidth="2" fill="none"/>
+                <rect x="9" y="9" width="13" height="13" rx="2" ry="2" stroke="currentColor" strokeWidth="2" fill="none" />
+                <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" stroke="currentColor" strokeWidth="2" fill="none" />
               </svg>
             )}
             <span className="button-text">
@@ -281,7 +371,7 @@ const AnalysisDashboard = () => {
             </div>
           )}
         </div>
-        
+
         <div className="chat-section">
           <h2 className="section-title">Ask Questions About Your Code</h2>
           <div className="chat-container">
@@ -307,9 +397,9 @@ const AnalysisDashboard = () => {
                 <div key={message.id} className={`message ${message.type}`}>
                   <div className="message-header">
                     <span className="message-type">
-                      {message.type === 'user' ? '👤 You' : 
-                       message.type === 'ai' ? '🤖 AI Assistant' : 
-                       '⚠️ Error'}
+                      {message.type === 'user' ? '👤 You' :
+                        message.type === 'ai' ? '🤖 AI Assistant' :
+                          '⚠️ Error'}
                     </span>
                     <span className="message-time">{formatTimestamp(message.timestamp)}</span>
                   </div>
@@ -322,12 +412,21 @@ const AnalysisDashboard = () => {
               {isLoadingChat && (
                 <div className="message ai loading">
                   <div className="message-header">
-                    <span className="message-type">codet</span>
+                    <span className="message-type">🤖 AI Assistant</span>
                     <span className="message-time">Now</span>
                   </div>
                   <div className="message-content">
-                    <LoadingSpinner size="small" />
-                    <span>Thinking...</span>
+                    <ProcessingStatus
+                      events={chatEvents}
+                      isProcessing={isLoadingChat}
+                      title="Thinking..."
+                    />
+                    {chatEvents.length === 0 && (
+                      <div className="initial-thinking">
+                        <LoadingSpinner size="small" />
+                        <span>Initializing analysis...</span>
+                      </div>
+                    )}
                   </div>
                 </div>
               )}
@@ -345,13 +444,13 @@ const AnalysisDashboard = () => {
                   className="chat-input"
                   disabled={isLoadingChat}
                 />
-                <button 
-                  type="submit" 
+                <button
+                  type="submit"
                   className="send-button"
                   disabled={isLoadingChat || !inputValue.trim()}
                 >
                   <svg width="20" height="20" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-                    <path d="M22 2L11 13M22 2L15 22L11 13M22 2L2 9L11 13" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                    <path d="M22 2L11 13M22 2L15 22L11 13M22 2L2 9L11 13" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
                   </svg>
                 </button>
               </div>

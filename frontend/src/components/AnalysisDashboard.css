@@ -90,6 +90,7 @@
   from {
     transform: rotate(0deg);
   }
+
   to {
     transform: rotate(360deg);
   }
@@ -240,27 +241,27 @@
   .analysis-dashboard {
     padding: 20px 0;
   }
-  
+
   .dashboard-header {
     flex-direction: column;
     align-items: center;
   }
-  
+
   .dashboard-title {
     font-size: 2rem;
   }
-  
+
   .copy-report-button {
     margin-top: 20px;
     padding: 12px 20px;
     font-size: 1rem;
   }
-  
+
   .metrics-grid {
     grid-template-columns: repeat(2, 1fr);
     gap: 16px;
   }
-  
+
   .severity-grid {
     grid-template-columns: repeat(2, 1fr);
     gap: 16px;
@@ -268,11 +269,12 @@
 }
 
 @media (max-width: 480px) {
+
   .metrics-grid,
   .severity-grid {
     grid-template-columns: 1fr;
   }
-  
+
   .dashboard-title {
     font-size: 1.75rem;
   }
@@ -353,6 +355,7 @@
     opacity: 0;
     transform: translateY(20px);
   }
+
   to {
     opacity: 1;
     transform: translateY(0);
@@ -409,8 +412,18 @@
 
 .message.loading .message-content {
   display: flex;
+  flex-direction: column;
+  gap: 12px;
+  width: 100%;
+}
+
+.initial-thinking {
+  display: flex;
   align-items: center;
   gap: 12px;
+  color: var(--text-secondary);
+  font-style: italic;
+  padding: 8px 0;
 }
 
 .message-meta {
@@ -506,11 +519,11 @@
     min-height: 300px;
     max-height: 450px;
   }
-  
+
   .message-content {
     max-width: 95%;
   }
-  
+
   .welcome-icon {
     font-size: 2.5rem;
   }

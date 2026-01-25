@@ -1,6 +1,6 @@
 """FastAPI application for Codet"""
 
-from fastapi import FastAPI, UploadFile, File, HTTPException, Form
+from fastapi import FastAPI, UploadFile, File, HTTPException, Form, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from pathlib import Path
 from typing import List, Optional
@@ -229,11 +229,7 @@ async def upload_files(
                 content = await file.read()
                 f.write(content)
 
-        # Analyze the uploaded files
-        request = AnalysisRequest(path=str(temp_dir))
-        response = await analyze_repository(request)
-
-        return response
+        return {"path": str(temp_dir)}
         
     except Exception as e:
         logger.error(f"Upload error: {str(e)}")
@@ -393,5 +389,261 @@ async def health_check():
         "timestamp": datetime.now().isoformat(),
         "redis": redis_status
     }
+
+
+@app.websocket("/api/ws/chat/{analysis_id}")
+async def websocket_chat(websocket: WebSocket, analysis_id: str):
+    """WebSocket endpoint for real-time chat with event streaming"""
+    await websocket.accept()
+    
+    # Message queue for thread-safe/async-safe sending
+    send_queue = asyncio.Queue()
+    
+    async def sender():
+        try:
+            while True:
+                message = await send_queue.get()
+                if message is None:
+                    break
+                await websocket.send_json(message)
+                send_queue.task_done()
+        except Exception as e:
+            logger.error(f"WebSocket sender error: {e}")
+
+    sender_task = asyncio.create_task(sender())
+    
+    try:
+        if not redis_client:
+            await send_queue.put({"type": "error", "message": "Redis client not available"})
+            return
+        
+        cached_data = await redis_client.get_cache(f"analysis:{analysis_id}")
+        if not cached_data:
+            await send_queue.put({"type": "error", "message": "Analysis not found"})
+            return
+        
+        result = deserialize_analysis_result(cached_data)
+        path_str = result.summary.get('temp_dir') or result.summary.get('project_path')
+        if not path_str:
+             await send_queue.put({"type": "error", "message": "Source path missing in analysis result."})
+             return
+
+        path = Path(path_str)
+        if not path.exists():
+            await send_queue.put({"type": "error", "message": "Codeshare files lost. Please re-analyze."})
+            return
+
+        while True:
+            # Receive question from client
+            try:
+                data = await websocket.receive_json()
+            except WebSocketDisconnect:
+                break
+                
+            question = data.get("question")
+            session_id = data.get("session_id")
+            
+            if not question:
+                continue
+
+            # Initialize chat engine
+            chat_engine = OrchestratorEngine(
+                mode="chat",
+                has_indexed_codebase=result.summary.get('indexed', False),
+                session_id=session_id
+            )
+            
+            chat_engine.set_cached_analysis(result)
+            chat_engine.initialize_agents()
+
+            # Set up event callback to stream events to queue
+            def event_callback(event_type, event_data):
+                # Use call_soon_threadsafe to be safe if called from other threads
+                try:
+                    loop = asyncio.get_event_loop()
+                    loop.call_soon_threadsafe(send_queue.put_nowait, {
+                        "type": "event",
+                        "event_type": event_type,
+                        "data": event_data
+                    })
+                except Exception as e:
+                    logger.error(f"Error putting event in queue: {e}")
+
+            chat_engine.set_event_callback(event_callback)
+
+            try:
+                # Get answer
+                answer = await chat_engine.answer_question(
+                    question=question,
+                    path=path
+                )
+                
+                # Send final answer
+                await send_queue.put({
+                    "type": "answer",
+                    "answer": answer,
+                    "session_id": chat_engine.session_id,
+                    "timestamp": datetime.now().isoformat()
+                })
+            except Exception as e:
+                logger.error(f"Error in websocket chat processing: {str(e)}")
+                await send_queue.put({"type": "error", "message": str(e)})
+
+    except WebSocketDisconnect:
+        logger.info(f"WebSocket disconnected for analysis {analysis_id}")
+    except Exception as e:
+        logger.error(f"WebSocket error: {str(e)}")
+    finally:
+        # Cleanup
+        await send_queue.put(None)
+        await sender_task
+        try:
+            await websocket.close()
+        except:
+            pass
+
+
+
+@app.websocket("/api/ws/analyze")
+async def websocket_analyze(websocket: WebSocket):
+    """WebSocket endpoint for real-time analysis with event streaming"""
+    await websocket.accept()
+    
+    send_queue = asyncio.Queue()
+    
+    async def sender():
+        try:
+            while True:
+                message = await send_queue.get()
+                if message is None: break
+                await websocket.send_json(message)
+                send_queue.task_done()
+        except: pass
+
+    sender_task = asyncio.create_task(sender())
+    
+    try:
+        data = await websocket.receive_json()
+        github_url = data.get("github_url")
+        path_str = data.get("path")
+        
+        analysis_path = None
+        
+        if github_url:
+            import re
+            
+            # Validate GitHub URL
+            github_pattern = r'^https://github\.com/[a-zA-Z0-9_.-]+/[a-zA-Z0-9_.-]+(?:/.*)?$'
+            github_url_fixed = github_url.replace('.git', '')
+            if not re.match(github_pattern, github_url):
+                await send_queue.put({"type": "error", "message": "Invalid GitHub repository URL"})
+                return
+            
+            # Create temporary directory for cloning
+            temp_dir = Path(tempfile.mkdtemp(prefix="codet_github_"))
+            temp_directories.add(str(temp_dir))
+            
+            await send_queue.put({"type": "info", "message": f"Cloning repository {github_url_fixed}..."})
+            
+            try:
+                # Use asyncio for non-blocking clone
+                process = await asyncio.create_subprocess_exec(
+                    'git', 'clone', github_url, str(temp_dir),
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE
+                )
+                stdout, stderr = await process.communicate()
+                
+                if process.returncode != 0:
+                    await send_queue.put({"type": "error", "message": f"Failed to clone: {stderr.decode()}"})
+                    return
+                
+                analysis_path = temp_dir
+            except Exception as e:
+                await send_queue.put({"type": "error", "message": str(e)})
+                return
+        elif path_str:
+            analysis_path = Path(path_str)
+            if not analysis_path.exists():
+                await send_queue.put({"type": "error", "message": f"Path not found: {path_str}"})
+                return
+        else:
+            await send_queue.put({"type": "error", "message": "No github_url or path provided"})
+            return
+
+        # Start Analysis
+        analysis_id = str(uuid.uuid4())
+        
+        # Check repository size
+        size_check = check_repository_size(str(analysis_path))
+        index = False
+            
+        if size_check['needs_indexing']:
+            await send_queue.put({"type": "info", "message": "Large codebase detected, indexing..."})
+            try:
+                chunks = parser.parse_directory(str(analysis_path))
+                indexer = CodebaseIndexer(
+                    collection_name=f"upload_{uuid.uuid4().hex[:8]}",
+                    qdrant_url=settings.qdrant_url,
+                    qdrant_api_key=settings.qdrant_api_key,
+                    use_memory=settings.use_memory
+                )
+                indexer.index_chunks(chunks, batch_size=100)
+                index = True
+                await send_queue.put({"type": "info", "message": "Indexing complete"})
+            except Exception as e:
+                logger.error(f"Failed to index codebase: {e}")
+        
+        engine = AnalysisEngine()
+        engine.enable_analysis(has_indexed_codebase=index)
+        
+        # Set up event callback
+        def event_callback(event_type, event_data):
+            try:
+                loop = asyncio.get_event_loop()
+                loop.call_soon_threadsafe(send_queue.put_nowait, {
+                    "type": "event",
+                    "event_type": event_type,
+                    "data": event_data
+                })
+            except: pass
+        
+        engine.set_event_callback(event_callback)
+        
+        # Run analysis
+        result = await engine.analyze_repository(analysis_path)
+        result.summary['temp_dir'] = str(analysis_path)
+        result.summary['indexed'] = index
+        if github_url:
+            result.summary['github_url'] = github_url.replace('.git', '')
+
+        # Cache the result
+        if redis_client:
+            await redis_client.set_cache(f"analysis:{analysis_id}", serialize_analysis_result(result), ttl=3600)
+        
+        # Send final completion
+        await send_queue.put({
+            "type": "completed",
+            "analysis_id": analysis_id,
+            "summary": result.summary,
+            "issues_count": len(result.issues)
+        })
+
+    except WebSocketDisconnect:
+        logger.info("WebSocket disconnected during analysis")
+    except Exception as e:
+        logger.error(f"WebSocket analysis error: {str(e)}")
+        try:
+            await send_queue.put({"type": "error", "message": str(e)})
+        except: pass
+    finally:
+        await send_queue.put(None)
+        await sender_task
+        try:
+            await websocket.close()
+        except: pass
+
+
+
 
 

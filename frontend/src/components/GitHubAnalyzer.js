@@ -6,12 +6,14 @@ import Button from './Button';
 import Input from './Input';
 import LoadingSpinner from './LoadingSpinner';
 import StatusCard from './StatusCard';
+import ProcessingStatus from './ProcessingStatus';
 
 const GitHubAnalyzer = () => {
   const [githubUrl, setGithubUrl] = useState('');
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [error, setError] = useState('');
   const [analysisProgress, setAnalysisProgress] = useState(0);
+  const [analysisEvents, setAnalysisEvents] = useState([]);
   const [uploadedFiles, setUploadedFiles] = useState([]);
   const [uploadMode, setUploadMode] = useState('files'); // 'files' or 'folder'
   const fileInputRef = React.useRef(null);
@@ -37,52 +39,58 @@ const GitHubAnalyzer = () => {
     setError('');
     setIsAnalyzing(true);
     setAnalysisProgress(0);
+    setAnalysisEvents([]);
 
-    let progressInterval;
-    try {
-      // Simulate progress updates (slower for more realistic feel) This is MAGIC!
-      progressInterval = setInterval(() => {
-        setAnalysisProgress(prev => {
-          if (prev >= 90) {
-            clearInterval(progressInterval);
-            return 90;
-          }
-          // Variable speed based on stage for more realistic feel
-          let increment;
-          if (prev < 30) {
-            // Cloning: slightly faster
-            increment = 0.8 + Math.random() * 2.2;
-          } else if (prev < 60) {
-            // Scanning: medium speed
-            increment = 0.6 + Math.random() * 1.8;
-          } else {
-            // Analyzing: slower as it gets complex
-            increment = 0.4 + Math.random() * 1.4;
-          }
-          return Math.min(prev + increment, 90);
-        });
-      }, 2500);
+    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+    const host = process.env.REACT_APP_API_URL
+      ? process.env.REACT_APP_API_URL.replace(/^https?:\/\//, '')
+      : 'localhost:8000';
 
-      // Call the backend API to clone and analyze
-      const response = await axios.post('/api/analyze-github', {
-        github_url: githubUrl,
-        languages: ['python', 'javascript', 'typescript', 'java', 'go', 'rust']
-      });
+    const wsUrl = `${protocol}//${host}/api/ws/analyze`;
+    const socket = new WebSocket(wsUrl);
 
-      clearInterval(progressInterval);
-      setAnalysisProgress(100);
+    socket.onopen = () => {
+      socket.send(JSON.stringify({ github_url: githubUrl }));
+    };
 
-      // Navigate to analysis results
-      setTimeout(() => {
-        navigate(`/analysis/${response.data.analysis_id}`);
-      }, 1000);
+    socket.onmessage = (event) => {
+      const data = JSON.parse(event.data);
 
-    } catch (err) {
-      clearInterval(progressInterval);
-      setError(err.response?.data?.detail || 'Failed to analyze repository. Please try again.');
+      if (data.type === 'event') {
+        setAnalysisEvents(prev => [...prev, {
+          event_type: data.event_type,
+          data: data.data,
+          timestamp: new Date().toISOString()
+        }]);
+
+        // Update pseudo-progress based on events
+        setAnalysisProgress(prev => Math.min(prev + 2, 95));
+      } else if (data.type === 'info') {
+        setAnalysisEvents(prev => [...prev, {
+          event_type: 'info',
+          data: { message: data.message },
+          timestamp: new Date().toISOString()
+        }]);
+      } else if (data.type === 'completed') {
+        setAnalysisProgress(100);
+        setTimeout(() => {
+          navigate(`/analysis/${data.analysis_id}`);
+        }, 1000);
+      } else if (data.type === 'error') {
+        setError(data.message);
+        setIsAnalyzing(false);
+        socket.close();
+      }
+    };
+
+    socket.onerror = (err) => {
+      setError('Connection error. Please try again.');
       setIsAnalyzing(false);
-      setAnalysisProgress(0);
-    }
+    };
+
+    socket.onclose = () => {
+      console.log('Analysis WebSocket closed');
+    };
   };
 
   const handleKeyPress = (e) => {
@@ -97,14 +105,14 @@ const GitHubAnalyzer = () => {
       const ext = file.name.split('.').pop().toLowerCase();
       return ['py', 'js', 'jsx', 'mjs', 'ts', 'tsx'].includes(ext);
     });
-    
+
     if (validFiles.length !== files.length) {
       const skippedCount = files.length - validFiles.length;
       setError(`${skippedCount} file(s) were skipped. Only .py, .js, .jsx, .mjs, .ts, and .tsx files are allowed.`);
     } else {
       setError('');
     }
-    
+
     // For folder uploads, preserve the relative paths
     if (isFolder && validFiles.length > 0) {
       const filesWithPaths = validFiles.map(file => {
@@ -116,7 +124,7 @@ const GitHubAnalyzer = () => {
     } else {
       setUploadedFiles(validFiles);
     }
-    
+
     setUploadMode(isFolder ? 'folder' : 'files');
   };
 
@@ -129,35 +137,12 @@ const GitHubAnalyzer = () => {
     setError('');
     setIsAnalyzing(true);
     setAnalysisProgress(0);
+    setAnalysisEvents([]); // Clear events for new analysis
 
-    let progressInterval;
     try {
-      // Simulate progress updates (slower for more realistic feel)
-      progressInterval = setInterval(() => {
-        setAnalysisProgress(prev => {
-          if (prev >= 90) {
-            clearInterval(progressInterval);
-            return 90;
-          }
-          // Variable speed based on stage for more realistic feel
-          let increment;
-          if (prev < 30) {
-            // Cloning: slightly faster
-            increment = 0.8 + Math.random() * 2.2;
-          } else if (prev < 60) {
-            // Scanning: medium speed
-            increment = 0.6 + Math.random() * 1.8;
-          } else {
-            // Analyzing: slower as it gets complex
-            increment = 0.4 + Math.random() * 1.4;
-          }
-          return Math.min(prev + increment, 90);
-        });
-      }, 2500);
-
       // Create FormData to upload files
       const formData = new FormData();
-      
+
       // If folder upload, include relative paths
       if (uploadMode === 'folder') {
         uploadedFiles.forEach(file => {
@@ -171,23 +156,64 @@ const GitHubAnalyzer = () => {
         });
       }
 
-      // Call the backend API to upload and analyze
+      // Call the backend API to upload files and get the path
       const response = await axios.post('/api/upload', formData, {
         headers: {
           'Content-Type': 'multipart/form-data'
         }
       });
 
-      clearInterval(progressInterval);
-      setAnalysisProgress(100);
+      const tempPath = response.data.path;
 
-      // Navigate to analysis results
-      setTimeout(() => {
-        navigate(`/analysis/${response.data.analysis_id}`);
-      }, 1000);
+      // Start WebSocket analysis on the uploaded path
+      const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+      const host = process.env.REACT_APP_API_URL
+        ? process.env.REACT_APP_API_URL.replace(/^https?:\/\//, '')
+        : 'localhost:8000';
 
+      const wsUrl = `${protocol}//${host}/api/ws/analyze`;
+      const socket = new WebSocket(wsUrl);
+
+      socket.onopen = () => {
+        socket.send(JSON.stringify({ path: tempPath }));
+      };
+
+      socket.onmessage = (event) => {
+        const data = JSON.parse(event.data);
+
+        if (data.type === 'event') {
+          setAnalysisEvents(prev => [...prev, {
+            event_type: data.event_type,
+            data: data.data,
+            timestamp: new Date().toISOString()
+          }]);
+          setAnalysisProgress(prev => Math.min(prev + 2, 95));
+        } else if (data.type === 'info') {
+          setAnalysisEvents(prev => [...prev, {
+            event_type: 'info',
+            data: { message: data.message },
+            timestamp: new Date().toISOString()
+          }]);
+        } else if (data.type === 'completed') {
+          setAnalysisProgress(100);
+          setTimeout(() => {
+            navigate(`/analysis/${data.analysis_id}`);
+          }, 1000);
+        } else if (data.type === 'error') {
+          setError(data.message);
+          setIsAnalyzing(false);
+          socket.close();
+        }
+      };
+
+      socket.onerror = (err) => {
+        setError('Connection error during analysis.');
+        setIsAnalyzing(false);
+      };
+      socket.onclose = () => {
+        console.log('Upload analysis WebSocket closed');
+      };
     } catch (err) {
-      clearInterval(progressInterval);
       setError(err.response?.data?.detail || 'Failed to analyze files. Please try again.');
       setIsAnalyzing(false);
       setAnalysisProgress(0);
@@ -204,7 +230,7 @@ const GitHubAnalyzer = () => {
               <span className="gradient-text"> Code Quality</span>
             </h1>
             <p className="hero-description">
-              Enter a GitHub repository URL to get comprehensive code quality analysis, 
+              Enter a GitHub repository URL to get comprehensive code quality analysis,
               security insights, and improvement recommendations.
             </p>
           </div>
@@ -227,13 +253,13 @@ const GitHubAnalyzer = () => {
                 disabled={isAnalyzing}
                 className="github-input"
               />
-              
+
               {error && (
                 <div className="error-message">
                   <svg width="16" height="16" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-                    <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="2"/>
-                    <line x1="15" y1="9" x2="9" y2="15" stroke="currentColor" strokeWidth="2"/>
-                    <line x1="9" y1="9" x2="15" y2="15" stroke="currentColor" strokeWidth="2"/>
+                    <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="2" />
+                    <line x1="15" y1="9" x2="9" y2="15" stroke="currentColor" strokeWidth="2" />
+                    <line x1="9" y1="9" x2="15" y2="15" stroke="currentColor" strokeWidth="2" />
                   </svg>
                   {error}
                 </div>
@@ -255,8 +281,8 @@ const GitHubAnalyzer = () => {
                 ) : (
                   <>
                     <svg width="20" height="20" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-                      <path d="M9 12L11 14L15 10" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
-                      <path d="M21 12C21 16.9706 16.9706 21 12 21C7.02944 21 3 16.9706 3 12C3 7.02944 7.02944 3 12 3C16.9706 3 21 7.02944 21 12Z" stroke="currentColor" strokeWidth="2"/>
+                      <path d="M9 12L11 14L15 10" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+                      <path d="M21 12C21 16.9706 16.9706 21 12 21C7.02944 21 3 16.9706 3 12C3 7.02944 7.02944 3 12 3C16.9706 3 21 7.02944 21 12Z" stroke="currentColor" strokeWidth="2" />
                     </svg>
                     Start Analysis
                   </>
@@ -296,10 +322,10 @@ const GitHubAnalyzer = () => {
                   className="upload-button"
                 >
                   <svg width="20" height="20" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-                    <path d="M21 15V19C21 20.1046 20.1046 21 19 21H5C3.89543 21 3 20.1046 3 19V15" 
-                          stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
-                    <path d="M7 10L12 5L17 10" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
-                    <path d="M12 5V15" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                    <path d="M21 15V19C21 20.1046 20.1046 21 19 21H5C3.89543 21 3 20.1046 3 19V15"
+                      stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+                    <path d="M7 10L12 5L17 10" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+                    <path d="M12 5V15" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
                   </svg>
                   Upload Files
                 </Button>
@@ -310,8 +336,8 @@ const GitHubAnalyzer = () => {
                   className="upload-button"
                 >
                   <svg width="20" height="20" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-                    <path d="M22 19C22 19.5304 21.7893 20.0391 21.4142 20.4142C21.0391 20.7893 20.5304 21 20 21H4C3.46957 21 2.96086 20.7893 2.58579 20.4142C2.21071 20.0391 2 19.5304 2 19V5C2 4.46957 2.21071 3.96086 2.58579 3.58579C2.96086 3.21071 3.46957 3 4 3H9L11 6H20C20.5304 6 21.0391 6.21071 21.4142 6.58579C21.7893 6.96086 22 7.46957 22 8V19Z" 
-                          stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                    <path d="M22 19C22 19.5304 21.7893 20.0391 21.4142 20.4142C21.0391 20.7893 20.5304 21 20 21H4C3.46957 21 2.96086 20.7893 2.58579 20.4142C2.21071 20.0391 2 19.5304 2 19V5C2 4.46957 2.21071 3.96086 2.58579 3.58579C2.96086 3.21071 3.46957 3 4 3H9L11 6H20C20.5304 6 21.0391 6.21071 21.4142 6.58579C21.7893 6.96086 22 7.46957 22 8V19Z"
+                      stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
                   </svg>
                   Upload Folder
                 </Button>
@@ -319,7 +345,7 @@ const GitHubAnalyzer = () => {
               {uploadedFiles.length > 0 && (
                 <div className="uploaded-files-info">
                   <p className="uploaded-count">
-                    {uploadMode === 'folder' 
+                    {uploadMode === 'folder'
                       ? `${uploadedFiles.length} file(s) selected from folder`
                       : `${uploadedFiles.length} file(s) selected`}
                   </p>
@@ -335,7 +361,7 @@ const GitHubAnalyzer = () => {
                         Analyzing...
                       </>
                     ) : (
-                      uploadMode === 'folder' 
+                      uploadMode === 'folder'
                         ? 'Analyze Folder'
                         : 'Analyze Files'
                     )}
@@ -347,16 +373,17 @@ const GitHubAnalyzer = () => {
             {isAnalyzing && (
               <div className="progress-section">
                 <div className="progress-bar">
-                  <div 
-                    className="progress-fill" 
+                  <div
+                    className="progress-fill"
                     style={{ width: `${analysisProgress}%` }}
                   />
                 </div>
-                <div className="progress-text">
-                  {analysisProgress < 30 && "Cloning repository..."}
-                  {analysisProgress >= 30 && analysisProgress < 50 && "Scanning files..."}
-                  {analysisProgress >= 50 && analysisProgress < 90 && "Analyzing code quality..."}
-                  {analysisProgress >= 90 && "Finalizing results..."}
+                <div className="progress-events">
+                  <ProcessingStatus
+                    events={analysisEvents}
+                    isProcessing={isAnalyzing}
+                    title="Analyzing Repository..."
+                  />
                 </div>
               </div>
             )}
