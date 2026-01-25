@@ -18,7 +18,7 @@ from .schemas import (
 from ..core.config import AgentConfig
 from ..core.shared_memory import SharedMemory
 from ..core.repository_tree import RepositoryTreeConstructor as TreeConstructor
-from ..core.rules_rag import RulesRAG
+from ..indexer import RulesIndexer
 from ..utils.symbol_extractor import extract_symbols
 
 logger = logging.getLogger(__name__)
@@ -248,8 +248,8 @@ FILES:
 ANALYSIS FOCUS: {analysis_focus.upper()}
 {focus_instructions}"""
 
-        # Query and inject relevant custom rules if RulesRAG is available
-        if hasattr(self.config, 'rules_rag') and self.config.rules_rag is not None:
+        # Query and inject relevant custom rules if RulesIndexer is available
+        if hasattr(self.config, 'rules_indexer') and self.config.rules_indexer is not None:
             try:
                 # Extract function and class names from file content
                 functions, classes = extract_symbols(file_path, content)
@@ -258,7 +258,7 @@ ANALYSIS FOCUS: {analysis_focus.upper()}
                 is_test = self._is_test_file(file_path)
                 
                 # Query relevant rules
-                relevant_rules = self.config.rules_rag.query_rules(
+                relevant_rules = self.config.rules_indexer.query_rules(
                     file_path=file_path,
                     functions=functions,
                     classes=classes,

@@ -1,13 +1,12 @@
 """RAG system for custom rules with vector embeddings and semantic search"""
 
-import hashlib
 import re
 import logging
 from pathlib import Path
 from typing import List, Dict, Any, Optional
 from dataclasses import dataclass
 from sentence_transformers import SentenceTransformer
-from qdrant_client import QdrantClient
+from ..utils.qdrant import QdrantBase
 from qdrant_client.models import (
     Distance, VectorParams, PointStruct,
     Filter, FieldCondition, MatchValue, MatchAny
@@ -31,7 +30,7 @@ class RuleChunk:
                 self.metadata[field] = [] if field in ['file_patterns', 'keywords'] else 'general'
 
 
-class RulesRAG:
+class RulesIndexer(QdrantBase):
     """RAG system for chunking, indexing, and querying custom rules"""
     
     def __init__(
@@ -50,47 +49,27 @@ class RulesRAG:
             qdrant_api_key: API key for Qdrant cloud
             use_memory: Use in-memory storage (for testing)
         """
-        self.collection_name = collection_name
-        
-        # Initialize Qdrant client
-        if use_memory:
-            self.client = QdrantClient(":memory:")
-        else:
-            self.client = QdrantClient(
-                url=qdrant_url or "http://localhost:6333",
-                api_key=qdrant_api_key,
-                https=qdrant_url and qdrant_url.startswith("https"),
-                timeout=30000,
-            )
+        super().__init__(
+            collection_name=collection_name,
+            qdrant_url=qdrant_url,
+            qdrant_api_key=qdrant_api_key,
+            use_memory=use_memory
+        )
         
         # Initialize embedding model (use lightweight model for rules)
         self.embedding_model = SentenceTransformer('sentence-transformers/all-MiniLM-L6-v2')
         self.embedding_dim = self.embedding_model.get_sentence_embedding_dimension()
         
         # Create collection if it doesn't exist
-        self._create_collection()
+        self.create_collection(
+            vectors_config=VectorParams(
+                size=self.embedding_dim,
+                distance=Distance.COSINE
+            )
+        )
         
         # Rule chunks cache
         self.chunks: List[RuleChunk] = []
-    
-    def _create_collection(self):
-        """Create Qdrant collection for rules"""
-        try:
-            collections = self.client.get_collections().collections
-            collection_exists = any(col.name == self.collection_name for col in collections)
-            
-            if not collection_exists:
-                self.client.create_collection(
-                    collection_name=self.collection_name,
-                    vectors_config=VectorParams(
-                        size=self.embedding_dim,
-                        distance=Distance.COSINE
-                    )
-                )
-                logger.info(f"Created Qdrant collection: {self.collection_name}")
-        except Exception as e:
-            logger.error(f"Error creating collection: {e}")
-            raise
     
     def chunk_rules(self, rules_content: str, source_file: str) -> List[RuleChunk]:
         """
@@ -335,7 +314,7 @@ class RulesRAG:
         points = []
         for chunk in chunks:
             # Generate unique ID
-            chunk_id = self._generate_chunk_id(chunk)
+            chunk_id = self.generate_id(f"{chunk.metadata.get('source_file', '')}:{chunk.metadata.get('category', '')}:{chunk.content[:50]}")
             
             # Generate embedding from natural language representation
             embedding = self.embedding_model.encode(chunk.natural_language)
@@ -550,25 +529,21 @@ class RulesRAG:
         
         return ranked
     
-    def _generate_chunk_id(self, chunk: RuleChunk) -> str:
-        """Generate unique ID for a rule chunk"""
-        unique_str = f"{chunk.metadata.get('source_file', '')}:{chunk.metadata.get('category', '')}:{chunk.content[:50]}"
-        return hashlib.md5(unique_str.encode()).hexdigest()
     
     def get_collection_size(self) -> int:
         """Get the number of indexed rule chunks"""
-        try:
-            collection_info = self.client.get_collection(self.collection_name)
-            return collection_info.points_count
-        except Exception as e:
-            logger.error(f"Error getting collection size: {e}")
-            return 0
+        return self.count()
     
     def clear_collection(self):
         """Clear all indexed rules"""
         try:
-            self.client.delete_collection(self.collection_name)
-            self._create_collection()
+            self.delete_collection()
+            self.create_collection(
+                vectors_config=VectorParams(
+                    size=self.embedding_dim,
+                    distance=Distance.COSINE
+                )
+            )
             self.chunks = []
             logger.info("Cleared rules collection")
         except Exception as e:

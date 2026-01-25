@@ -25,7 +25,7 @@ from .models import (
     AnalysisResponse, 
     CodebaseQuestion,
 )
-from ..codebase_indexer import MultiLanguageCodebaseParser, QdrantCodebaseIndexer
+from ..indexer import MultiLanguageCodebaseParser, CodebaseIndexer
 from ..utils import check_repository_size
 import pickle
 import base64
@@ -153,7 +153,7 @@ async def analyze_repository(request: AnalysisRequest):
                 logger.info(f"Auto-indexing large codebase: {size_check['reason']}")
                 # Index the codebase for better performance
                 chunks = parser.parse_directory(str(path))
-                indexer = QdrantCodebaseIndexer(
+                indexer = CodebaseIndexer(
                     collection_name=f"upload_{uuid.uuid4().hex[:8]}",
                     qdrant_url=settings.qdrant_url,
                     qdrant_api_key=settings.qdrant_api_key,

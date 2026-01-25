@@ -28,17 +28,17 @@ class AnalysisEngine:
             config_path: Optional[Path] = None,
             has_indexed_codebase: bool = False, 
             collection_name: Optional[str] = None,
-            rules_rag=None  # RulesRAG instance for context-aware rule retrieval
+            rules_indexer=None  # RulesIndexer instance for context-aware rule retrieval
         ):
         """Enable orchestrator-powered analysis (main analysis method)"""
         try:
             full_config = Config.load(config_path)
             full_config.validate()
             
-            # Inject RulesRAG instance if provided (preferred mode)
-            if rules_rag:
-                full_config.agent.rules_rag = rules_rag
-                logger.info(f"RulesRAG enabled with {rules_rag.get_collection_size()} indexed rules")
+            # Inject RulesIndexer instance if provided (preferred mode)
+            if rules_indexer:
+                full_config.agent.rules_indexer = rules_indexer
+                logger.info(f"RulesIndexer enabled with {rules_indexer.get_collection_size()} indexed rules")
             
             # Use standard orchestrator
             logger.info("Using orchestrator with sequential file analysis")

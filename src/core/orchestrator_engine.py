@@ -291,10 +291,10 @@ class OrchestratorEngine:
             try:
                 # Initialize indexer if needed
                 if not hasattr(self, '_codebase_indexer') or self._codebase_indexer is None:
-                    from ..codebase_indexer import QdrantCodebaseIndexer
+                    from ..indexer import CodebaseIndexer
                     from ..core.config import settings
                     
-                    self._codebase_indexer = QdrantCodebaseIndexer(
+                    self._codebase_indexer = CodebaseIndexer(
                         collection_name=self.collection_name,
                         qdrant_url=settings.qdrant_url,
                         qdrant_api_key=settings.qdrant_api_key,

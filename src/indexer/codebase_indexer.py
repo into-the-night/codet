@@ -1,10 +1,8 @@
 """Qdrant codebase indexer for vector storage and retrieval"""
 
 import os
-import hashlib
 from typing import List, Dict, Any, Optional
 from sentence_transformers import SentenceTransformer
-from qdrant_client import QdrantClient
 from qdrant_client.models import (
     Distance, VectorParams, PointStruct, 
     Filter, FieldCondition, MatchValue
@@ -13,7 +11,10 @@ from ..agents.schemas import CodeChunk
 import time
 
 
-class QdrantCodebaseIndexer:
+from ..utils.qdrant import QdrantBase
+
+
+class CodebaseIndexer(QdrantBase):
     """Indexer for storing and retrieving code embeddings using Qdrant"""
     
     def __init__(self, 
@@ -30,18 +31,12 @@ class QdrantCodebaseIndexer:
             qdrant_api_key: API key for Qdrant cloud
             use_memory: Use in-memory storage (for testing)
         """
-        self.collection_name = collection_name
-        
-        # Initialize Qdrant client
-        if use_memory:
-            self.client = QdrantClient(":memory:")
-        else:
-            self.client = QdrantClient(
-                url=qdrant_url,
-                api_key=qdrant_api_key,
-                https=True,
-                timeout=300000,
-            )
+        super().__init__(
+            collection_name=collection_name,
+            qdrant_url=qdrant_url,
+            qdrant_api_key=qdrant_api_key,
+            use_memory=use_memory
+        )
         
         # Initialize embedding models
         self.nlp_model = SentenceTransformer('sentence-transformers/all-MiniLM-L6-v2')
@@ -52,33 +47,12 @@ class QdrantCodebaseIndexer:
         self.code_dim = self.code_model.get_sentence_embedding_dimension()
         
         # Create collection if it doesn't exist
-        self._create_collection()
-    
-    def _create_collection(self):
-        """Create Qdrant collection with multiple vectors"""
-        try:
-            collections = self.client.get_collections().collections
-            collection_exists = any(col.name == self.collection_name for col in collections)
-            
-            if collection_exists:
-                # Check if the existing collection has the correct vector configuration
-                try:
-                    self.client.get_collection(self.collection_name)
-                except Exception:
-                    self.client.delete_collection(self.collection_name)
-                    collection_exists = False
-            
-            if not collection_exists:
-                # Create collection with multiple named vectors
-                self.client.create_collection(
-                    collection_name=self.collection_name,
-                    vectors_config={
-                        "nlp": VectorParams(size=self.nlp_dim, distance=Distance.COSINE),
-                        "code": VectorParams(size=self.code_dim, distance=Distance.COSINE),
-                    }
-                )
-        except Exception as e:
-            print(f"Error creating collection: {e}")
+        self.create_collection(
+            vectors_config={
+                "nlp": VectorParams(size=self.nlp_dim, distance=Distance.COSINE),
+                "code": VectorParams(size=self.code_dim, distance=Distance.COSINE),
+            }
+        )
     
     def index_chunks(self, chunks: List[CodeChunk], batch_size: int = 32):
         """Index code chunks into Qdrant"""
@@ -244,16 +218,14 @@ class QdrantCodebaseIndexer:
     
     def get_statistics(self) -> Dict[str, Any]:
         """Get statistics about the indexed codebase"""
-        collection_info = self.client.get_collection(self.collection_name)
-        
+        collection_info = self.get_info()
+        if not collection_info:
+            return {"error": "Collection not found"}
+            
         # Get counts by type
         type_counts = {}
         for code_type in ["function", "method", "class", "module", "property", "enum"]:
-            count = self.client.count(
-                collection_name=self.collection_name,
-                count_filter=self._build_filter({"code_type": code_type})
-            )
-            type_counts[code_type] = count.count
+            type_counts[code_type] = self.count({"code_type": code_type})
         
         return {
             "total_chunks": collection_info.points_count,
@@ -269,7 +241,7 @@ class QdrantCodebaseIndexer:
         """Generate unique ID for a code chunk"""
         # Create a unique string from chunk properties
         unique_str = f"{chunk.context.get('file_path', '')}:{chunk.name}:{chunk.line_from}:{chunk.code_type}"
-        return hashlib.md5(unique_str.encode()).hexdigest()
+        return self.generate_id(unique_str)
     
     def _chunk_to_natural_language(self, chunk: CodeChunk) -> str:
         """Convert chunk to natural language if not already provided"""
@@ -291,28 +263,6 @@ class QdrantCodebaseIndexer:
         
         return '. '.join(parts)
     
-    def _build_filter(self, filter_dict: Dict[str, Any]) -> Filter:
-        """Build Qdrant filter from dictionary"""
-        conditions = []
-        
-        for key, value in filter_dict.items():
-            if '.' in key:
-                # Nested field
-                conditions.append(
-                    FieldCondition(
-                        key=key,
-                        match=MatchValue(value=value)
-                    )
-                )
-            else:
-                conditions.append(
-                    FieldCondition(
-                        key=key,
-                        match=MatchValue(value=value)
-                    )
-                )
-        
-        return Filter(must=conditions)
     
     def _merge_results(self, nlp_results: List[Dict], code_results: List[Dict]) -> List[Dict[str, Any]]:
         """Merge and deduplicate results from NLP and code search"""

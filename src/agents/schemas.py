@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 
-class IssueSeverityEnum(str, Enum):
+class IssueSeverity(str, Enum):
     """Severity levels for code quality issues"""
     CRITICAL = "critical"
     HIGH = "high"
@@ -14,7 +14,7 @@ class IssueSeverityEnum(str, Enum):
     INFO = "info"
 
 
-class IssueCategoryEnum(str, Enum):
+class IssueCategory(str, Enum):
     """Categories of code quality issues"""
     SECURITY = "security"
     PERFORMANCE = "performance"
@@ -56,8 +56,8 @@ class AnalysisResult:
 
 class CodeIssueSchema(BaseModel):
     """Schema for a code quality issue"""
-    category: IssueCategoryEnum = Field(description="Category of the issue")
-    severity: IssueSeverityEnum = Field(description="Severity level of the issue")
+    category: IssueCategory = Field(description="Category of the issue")
+    severity: IssueSeverity = Field(description="Severity level of the issue")
     title: str = Field(description="Brief descriptive title of the issue")
     description: str = Field(description="Detailed explanation of the issue")
     line_number: Optional[int] = Field(None, description="Line number where the issue occurs")

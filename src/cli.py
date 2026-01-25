@@ -18,7 +18,7 @@ import httpx
 from .core.config import get_settings
 from .core.analysis_engine import AnalysisEngine
 from .core.orchestrator_engine import OrchestratorEngine
-from .codebase_indexer import MultiLanguageCodebaseParser, QdrantCodebaseIndexer
+from .indexer import MultiLanguageCodebaseParser, CodebaseIndexer
 from .utils import FileFilter, RepoSizeChecker
 from .utils.cli_status import CLIProcessingStatus, SimpleProcessingStatus
 
@@ -234,7 +234,7 @@ def analyze(path, output, format, config, use_local, ollama_model, index, collec
             if chunks:
                 # Initialize indexer
                 task = progress.add_task("🚀 Initializing Qdrant indexer...", total=None)
-                indexer = QdrantCodebaseIndexer(
+                indexer = CodebaseIndexer(
                     collection_name=collection,
                     qdrant_url=qdrant_url,
                     qdrant_api_key=qdrant_api_key,
@@ -252,14 +252,14 @@ def analyze(path, output, format, config, use_local, ollama_model, index, collec
     
     
     # Load and index custom rules if provided
-    rules_rag = None
+    rules_indexer = None
     if rules:
         console.print(f"[cyan]📋 Loading and indexing {len(rules)} custom rule file(s)...[/cyan]")
-        from .core.rules_rag import RulesRAG
+        from .indexer import RulesIndexer
         
         try:
-            # Create RulesRAG instance
-            rules_rag = RulesRAG(
+            # Create RulesIndexer instance
+            rules_indexer = RulesIndexer(
                 collection_name=collection,
                 qdrant_url=qdrant_url,
                 qdrant_api_key=qdrant_api_key,
@@ -267,14 +267,14 @@ def analyze(path, output, format, config, use_local, ollama_model, index, collec
             )
             
             # Index rules from files
-            rules_rag.index_rules_from_files(list(rules))
+            rules_indexer.index_rules_from_files(list(rules))
             
-            num_rules = rules_rag.get_collection_size()
+            num_rules = rules_indexer.get_collection_size()
             console.print(f"[green]✅ Indexed {num_rules} rule chunks successfully[/green]\n")
         except Exception as e:
             logger.error(f"Error indexing custom rules: {e}")
             console.print(f"[yellow]⚠️  Failed to index custom rules: {e}[/yellow]\n")
-            rules_rag = None
+            rules_indexer = None
     
     # Initialize the analysis engine
     console.print("[bold cyan]🚀 Initializing analysis engine...[/bold cyan]")
@@ -285,7 +285,7 @@ def analyze(path, output, format, config, use_local, ollama_model, index, collec
         config_path,
         has_indexed_codebase=index or needs_indexing,
         collection_name=collection,
-        rules_rag=rules_rag  # Pass RulesRAG instance instead of text
+        rules_indexer=rules_indexer  # Pass RulesIndexer instance instead of text
     )
     
     if not engine.enable_orchestrator:
