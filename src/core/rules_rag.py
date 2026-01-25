@@ -420,7 +420,7 @@ class RulesRAG:
         # Build semantic query from file context
         query_text = self._build_query_context(file_path, functions, classes, is_test)
         logger.info(f"Querying rules for {file_path}: {query_text}")
-        print(f"Querying rules for {file_path}: {query_text}")
+
         # Generate query embedding
         query_embedding = self.embedding_model.encode(query_text)
         
@@ -432,7 +432,6 @@ class RulesRAG:
             with_payload=True
         )
         logger.info(f"Found {len(results)} relevant rules for {file_path}")
-        print(f"Rules query result: {results}")
         # Re-rank by relevance and priority
         ranked_results = self._rerank_results(results, file_path, functions, classes)
         

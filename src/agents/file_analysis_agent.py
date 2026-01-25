@@ -142,8 +142,6 @@ Prioritize high-impact issues that affect security, performance, or maintainabil
             shared_memory = repository_context['shared_memory']
         elif self.shared_memory:
             shared_memory = self.shared_memory
-
-        print(f"shared memory: {shared_memory}")
         
         full_path = root_path / file_path
         
@@ -174,7 +172,6 @@ Prioritize high-impact issues that affect security, performance, or maintainabil
                 shared_memory=shared_memory
             )
             
-            print(f"file analysis prompt: {prompt}")
             # Generate structured analysis
             try:
                 structured_response = await self.generate_structured_response(
@@ -194,7 +191,6 @@ Prioritize high-impact issues that affect security, performance, or maintainabil
                 # Add generated memory items to shared memory
                 if shared_memory and hasattr(structured_response, 'memory_items') and structured_response.memory_items:
                     shared_memory.add_items(structured_response.memory_items)
-                    print(f"Added {len(structured_response.memory_items)} memory items to shared memory from {file_path}")
                     logger.info(f"Added {len(structured_response.memory_items)} memory items to shared memory from {file_path}")
                 
             except Exception as e:
