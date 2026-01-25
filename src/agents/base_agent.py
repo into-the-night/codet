@@ -248,119 +248,71 @@ class BaseAgent:
             logger.error(f"Error generating structured response: {e}")
             raise
     
-    async def generate_structured_response_with_functions(self, prompt: str, 
-                                                        response_schema: Type[T],
-                                                        function_declarations: List[BaseModel],
-                                                        function_handlers: Dict[str, Callable],
-                                                        context: Dict[str, Any] = None) -> T:
-        """Generate a structured response with function calling support"""
-        context = context or {}
+    async def run_tool_loop(self, user_input: str, system_message: str, tools: List[BaseModel], tool_output_processor: Optional[Callable] = None) -> str:
+        """
+        Run the agent in a loop: LLM -> Tools -> LLM -> ... -> Final Response
         
-        # Check cache
-        cache_key = self._generate_cache_key(f"structured_functions_{prompt}", context)
-        cached_response = await self._get_from_cache(cache_key)
-        if cached_response:
-            try:
-                return response_schema.model_validate_json(cached_response)
-            except Exception:
-                pass
+        Args:
+            user_input: The user's input/question
+            system_message: The system prompt
+            tools: List of tool definitions (Pydantic models)
+            tool_output_processor: Optional callback to process tool outputs before they go back to LLM
+            
+        Returns:
+            The final response from the LLM (string)
+        """
+        messages = [
+            SystemMessage(content=system_message),
+            HumanMessage(content=user_input)
+        ]
         
-        try:
-            full_prompt = self._build_prompt(prompt, context)
-            llm_with_tools = self.llm.bind_tools(function_declarations)
-            
-            messages = [
-                SystemMessage(content=self.system_prompt),
-                HumanMessage(content=full_prompt)
-            ]
-            
-            # First invocation with tools
+        # Bind tools to the LLM
+        llm_with_tools = self.llm.bind_tools(tools)
+        
+        while True:
+            # invoke the LLM
             response = await llm_with_tools.ainvoke(messages)
+            
+            # Check for tool calls
             if hasattr(response, 'tool_calls') and response.tool_calls:
+                messages.append(response) # Add the AI's response (with tool calls) to history
+                
                 # Execute tool calls
-                tool_messages = []
                 for tool_call in response.tool_calls:
                     function_name = tool_call['name']
                     function_args = tool_call.get('args', {})
+                    tool_call_id = tool_call['id']
                     
-                    if function_name in function_handlers:
-                        try:
-                            result = await function_handlers[function_name](**function_args)
-                            # Ensure result is serializable
-                            if isinstance(result, (dict, list)):
-                                result_content = json.dumps(result)
-                            else:
-                                result_content = str(result)
-                            
-                            tool_messages.append(ToolMessage(
-                                content=result_content,
-                                tool_call_id=tool_call['id']
-                            ))
-                            
-                        except Exception as e:
-                            logger.error(f"Error executing function {function_name}: {e}")
-                            tool_messages.append(ToolMessage(
-                                content=f"Error: {str(e)}",
-                                tool_call_id=tool_call['id']
-                            ))
-                    else:
-                        logger.warning(f"No handler found for function: {function_name}")
-                        tool_messages.append(ToolMessage(
-                            content=f"Error: No handler found for function: {function_name}",
-                            tool_call_id=tool_call['id']
-                        ))
-                
-                messages.extend([response] + tool_messages)
-                # Add a clear instruction for structured output
-                schema_name = response_schema.__name__
+                    # Execute the tool
+                    try:
+                        # Find the handler
+                        if hasattr(self, 'function_handlers') and function_name in self.function_handlers:
+                            handler = self.function_handlers[function_name]
+                            result = await handler(**function_args)
+                        else:
+                             result = f"Error: No handler found for tool {function_name}"
+                             
+                        # Process the result if a processor is provided
+                        if tool_output_processor:
+                            processed_result = await tool_output_processor(function_name, result)
+                        else:
+                            processed_result = result
 
-                # Handle chat mode response schema or query functions
-                if response_schema == ChatResponseSchema or function_name in ["QueryFile", "QueryCodebase"]:
-                    final_prompt = f"""Based on the function execution results above, provide your final response as a {schema_name}. 
-                    
-                    Important: 
-                    - Do NOT make any more function calls
-                    - Provide ONLY the structured response with the required fields
-                    - For AnalysisResponseSchema: provide 'issues' (list, required)
-                    - For ChatResponseSchema: provide 'answer' (string), 'files_to_analyze' (list), and 'analysis_complete' (boolean)"""
-                    
-                    messages.append(HumanMessage(content=final_prompt))
-                    structured_llm = self.llm.with_structured_output(response_schema)
-                    final_result = await structured_llm.ainvoke(messages)
-                    await self._add_to_cache(cache_key, final_result.model_dump_json())
-                    return final_result
-                else:
-                    # Just return the response (file analysis already adds the issues to Orchestrator Engine)
-                    return result
-                
+                        # Convert to string for the message
+                        if isinstance(processed_result, (dict, list)):
+                            content = json.dumps(processed_result)
+                        else:
+                            content = str(processed_result)
+                            
+                        messages.append(ToolMessage(content=content, tool_call_id=tool_call_id))
+                        
+                    except Exception as e:
+                        logger.error(f"Error executing tool {function_name}: {e}")
+                        messages.append(ToolMessage(content=f"Error executing tool: {str(e)}", tool_call_id=tool_call_id))
             else:
-                # No tool calls detected - still need to get structured response
-                messages.append(response)
-                
-                # Add instruction for structured output
-                schema_name = response_schema.__name__
+                # No tool calls, this is the final response
+                return response.content
 
-                # Handle chat mode response schema
-                if response_schema == ChatResponseSchema:
-                    final_prompt = f"""Please provide your response as a {schema_name} in the required structured format. 
-                    
-                    Important: 
-                    - Provide ONLY the structured response with the required fields
-                    - For ChatResponseSchema: provide 'answer' (string), 'files_to_analyze' (list), and 'analysis_complete' (boolean)"""
-                    
-                    messages.append(HumanMessage(content=final_prompt))
-                    # Get structured response
-                    structured_llm = self.llm.with_structured_output(response_schema)
-                    final_result = await structured_llm.ainvoke(messages)
-                    # Cache the result
-                    await self._add_to_cache(cache_key, final_result.model_dump_json())
-                    return final_result
-                else:
-                    return response
-            
-        except Exception as e:
-            logger.error(f"Error generating structured response with functions: {e}")
-            raise
 
     
     def parse_json_response(self, response: str) -> Any:
