@@ -4,7 +4,7 @@ from pathlib import Path
 from typing import List, Dict, Any, Optional
 import logging
 
-from ..analyzers.analyzer import AnalysisResult
+from ..agents.schemas import AnalysisResult
 from ..core.repository_tree import RepositoryTreeConstructor as TreeConstructor
 from ..core.config import Config
 from ..core.orchestrator_engine import OrchestratorEngine

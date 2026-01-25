@@ -5,7 +5,7 @@ from pathlib import Path
 from typing import Dict, Any, List
 from datetime import datetime
 
-from ..analyzers.analyzer import AnalysisResult, CodeIssue, IssueSeverity, IssueCategory
+from ..agents.schemas import AnalysisResult, CodeIssue, IssueSeverity, IssueCategory
 
 
 class BaseReporter(ABC):

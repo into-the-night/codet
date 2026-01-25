@@ -10,11 +10,13 @@ from .base_agent import BaseAgent
 from .schemas import (
     AnalysisResponseSchema, 
     CodeIssueSchema,
-    FileAnalysisResultEnhanced
+    FileAnalysisResultEnhanced,
+    CodeIssue,
+    IssueCategory,
+    IssueSeverity
 )
 from ..core.config import AgentConfig
 from ..core.shared_memory import SharedMemory
-from ..analyzers.analyzer import CodeIssue, IssueCategory, IssueSeverity
 from ..core.repository_tree import RepositoryTreeConstructor as TreeConstructor
 from ..core.rules_rag import RulesRAG
 from ..utils.symbol_extractor import extract_symbols

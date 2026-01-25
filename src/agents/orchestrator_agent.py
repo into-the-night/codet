@@ -7,9 +7,15 @@ from pathlib import Path
 from datetime import datetime
 
 from .base_agent import BaseAgent
-from .schemas import AnalysisResponseSchema, CodeIssueSchema, ChatResponseSchema
+from .schemas import ( 
+    AnalysisResponseSchema, 
+    CodeIssueSchema,
+    ChatResponseSchema,
+    CodeIssue,
+    IssueCategory,
+    IssueSeverity
+    )
 from ..core.config import AgentConfig, RedisConfig
-from ..analyzers.analyzer import CodeIssue, IssueCategory, IssueSeverity
 from .tools import AnalyzeFile, QueryCodebase, QueryFile
 from ..core.message_history import MessageRole
 from ..core.shared_memory import SharedMemory

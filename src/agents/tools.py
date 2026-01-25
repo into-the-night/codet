@@ -1,15 +1,9 @@
 from pydantic import BaseModel, Field
 from typing import Optional, List
 
-
 class AnalyzeFile(BaseModel):
     """Analyzes a specific file to understand its content, structure, and functionality for answering questions about the codebase."""
     file_path: str = Field(..., description="The path to the file to analyze, relative to the repository root.")
-    analysis_focus: Optional[str] = Field("general", description="Specific focus area for analysis (e.g., 'security', 'performance', 'general')")
-
-class AnalyzeFilesBatch(BaseModel):
-    """Analyzes a batch of files to understand their content, structure, and functionality for answering questions about the codebase."""
-    file_paths: List[str] = Field(..., description="A list of file paths to analyze.")
     analysis_focus: Optional[str] = Field("general", description="Specific focus area for analysis (e.g., 'security', 'performance', 'general')")
 
 class QueryFile(BaseModel):

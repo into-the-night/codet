@@ -14,7 +14,7 @@ from contextlib import asynccontextmanager
 import glob
 import os
 
-from ..analyzers.analyzer import AnalysisResult
+from ..agents.schemas import AnalysisResult
 from ..core.analysis_engine import AnalysisEngine
 from ..core.orchestrator_engine import OrchestratorEngine
 from ..core.config import RedisConfig, get_settings

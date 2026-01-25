@@ -1,8 +1,8 @@
-"""Pydantic schemas for structured output with Google GenAI"""
-
 from enum import Enum
 from typing import List, Optional, Dict, Any
 from pydantic import BaseModel, Field
+from dataclasses import dataclass
+from pathlib import Path
 
 
 class IssueSeverityEnum(str, Enum):
@@ -25,6 +25,34 @@ class IssueCategoryEnum(str, Enum):
     STYLE = "style"
     MAINTAINABILITY = "maintainability"
 
+@dataclass
+class CodeIssue:
+    """Represents a code quality issue"""
+    category: IssueCategory
+    severity: IssueSeverity
+    title: str
+    description: str
+    file_path: Path
+    line_number: Optional[int] = None
+    column_number: Optional[int] = None
+    suggestion: Optional[str] = None
+    code_snippet: Optional[str] = None
+    metadata: Optional[Dict[str, Any]] = None
+
+
+@dataclass
+class AnalysisResult:
+    """Result of a code analysis"""
+    project_path: Path
+    issues: List[CodeIssue]
+    metrics: Dict[str, Any]
+    summary: Dict[str, Any]
+    timestamp: str
+    total_issues: Optional[int] = None
+    analysis_time: Optional[float] = None
+
+
+## Model output schemas
 
 class CodeIssueSchema(BaseModel):
     """Schema for a code quality issue"""

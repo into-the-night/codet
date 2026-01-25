@@ -7,7 +7,7 @@ from datetime import datetime
 import asyncio
 import uuid
 
-from ..analyzers.analyzer import AnalysisResult, CodeIssue
+from ..agents.schemas import AnalysisResult, CodeIssue
 from ..core.repository_tree import RepositoryTreeConstructor
 from .config import Config
 from .shared_memory import SharedMemory

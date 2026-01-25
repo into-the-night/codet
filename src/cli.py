@@ -19,7 +19,7 @@ from .core.config import get_settings
 from .core.analysis_engine import AnalysisEngine
 from .core.orchestrator_engine import OrchestratorEngine
 from .codebase_indexer import MultiLanguageCodebaseParser, QdrantCodebaseIndexer
-from .utils import FileFilter, RepoSizeChecker, load_and_summarize_rules_sync
+from .utils import FileFilter, RepoSizeChecker
 from .utils.cli_status import CLIProcessingStatus, SimpleProcessingStatus
 
 
