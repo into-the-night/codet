@@ -10,7 +10,7 @@ import uuid
 from ..agents.schemas import AnalysisResult, CodeIssue
 from ..core.repository_tree import RepositoryTreeConstructor
 from .config import Config
-from .shared_memory import SharedMemory
+from .shared_memory import SharedMemory, ROLE_FILE_ANALYSIS
 from ..agents.orchestrator_agent import OrchestratorAgent
 from ..agents.file_analysis_agent import FileAnalysisAgent
 from ..reports.report_generator import ReportGenerator
@@ -155,7 +155,9 @@ class OrchestratorEngine:
                 'main_languages': list(tree_data['statistics']['file_extensions'].keys())[:5],
                 'tree': tree_data['tree'],
                 'project_type': self._detect_project_type(tree_data),
-                'shared_memory': self.shared_memory
+                'shared_memory': self.shared_memory.view_for(
+                    role=ROLE_FILE_ANALYSIS, file_scope=file_path
+                )
             }
             
             # Add user question context for chat mode
@@ -256,7 +258,9 @@ class OrchestratorEngine:
                     'main_languages': list(tree_data['statistics']['file_extensions'].keys())[:5],
                     'tree': tree_data['tree'],
                     'project_type': self._detect_project_type(tree_data),
-                    'shared_memory': self.shared_memory
+                    'shared_memory': self.shared_memory.view_for(
+                    role=ROLE_FILE_ANALYSIS, file_scope=file_path
+                )
                 }
                 answer = await self.file_analysis_agent.answer_file_query(
                     file_path=file_path,
@@ -315,7 +319,9 @@ class OrchestratorEngine:
                     'tree': tree_data['tree'],
                     'project_type': self._detect_project_type(tree_data),
                     'search_results': len(results.get('merged', [])),
-                    'shared_memory': self.shared_memory
+                    # Codebase-wide query: no file scope. Passed only for
+                    # downstream context; the handler does not mutate memory.
+                    'shared_memory': self.shared_memory,
                 }
                 
                 # Format the answer from search results

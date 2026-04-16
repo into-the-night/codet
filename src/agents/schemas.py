@@ -70,14 +70,36 @@ class CodeIssueSchema(BaseModel):
 class AnalysisResponseSchema(BaseModel):
     """Schema for the complete analysis response"""
     issues: List[CodeIssueSchema] = Field(description="List of code quality issues found")
-    memory_items: Optional[List[str]] = Field(default_factory=list, description="Action items to add to shared memory for cross-codebase verification (e.g., 'Check if authenticate() has tests in test_auth.py')")
+    memory_items: Optional[List[str]] = Field(
+        default_factory=list,
+        description=(
+            "Todos: action items for cross-codebase verification (e.g., 'Check if "
+            "authenticate() has tests in test_auth.py'). Each item becomes a pending "
+            "todo other agents can claim."
+        ),
+    )
+    notes: Optional[List[str]] = Field(
+        default_factory=list,
+        description=(
+            "Durable observations about this file or the codebase (e.g., 'authenticate() "
+            "in src/auth.py:45 is the single entry point for login'). Stored as notes "
+            "visible to all agents."
+        ),
+    )
 
 class ChatResponseSchema(BaseModel):
     """Schema for chat mode responses"""
     answer: str = Field(description="The answer to the user's question about the codebase")
     files_to_analyze: Optional[List[str]] = Field(None, description="Files that need to be analyzed to answer the question")
     analysis_complete: bool = Field(False, description="Whether the analysis is complete and ready to provide final answer")
-    memory_items: Optional[List[str]] = Field(default_factory=list, description="Action items to add to shared memory for cross-codebase context")
+    memory_items: Optional[List[str]] = Field(
+        default_factory=list,
+        description="Action items to add to shared memory as todos for cross-codebase context",
+    )
+    notes: Optional[List[str]] = Field(
+        default_factory=list,
+        description="Durable observations about the codebase to share with other agents",
+    )
 
 
 class FileAnalysisRequestSchema(BaseModel):
@@ -97,7 +119,8 @@ class FileAnalysisResultEnhanced(BaseModel):
     """Enhanced file analysis response that includes next steps"""
     file_path: str = Field(description="Path to the analyzed file")
     issues: List[CodeIssueSchema] = Field(default_factory=list, description="Issues found in the file")
-    memory_items: Optional[List[str]] = Field(default_factory=list, description="Action items to add to shared memory for cross-codebase verification")
+    memory_items: Optional[List[str]] = Field(default_factory=list, description="Todos: action items for cross-codebase verification")
+    notes: Optional[List[str]] = Field(default_factory=list, description="Durable observations about the file for other agents")
     summary: Optional[str] = Field(None, description="Brief summary of the file analysis")
 
 
