@@ -197,20 +197,19 @@ Prioritize high-impact issues that affect security, performance, or maintainabil
                 # Convert to CodeIssue objects
                 issues = self._convert_to_code_issues(structured_response.issues, full_path)
 
-                # Persist findings to shared memory through the scoped view
+                # Persist findings to shared memory through the scoped view.
+                # Notes are about *this* file, so we scope them. Todos are
+                # cross-file checks - leave them unscoped so the agent that
+                # later analyzes the referenced file can see them.
                 if memory_view is not None:
                     new_todos = getattr(structured_response, 'memory_items', None) or []
                     new_notes = getattr(structured_response, 'notes', None) or []
                     if new_todos:
-                        memory_view.add_todos(new_todos, target_file=file_path)
+                        memory_view.add_todos(new_todos)
                         logger.info(f"{file_path}: added {len(new_todos)} todos")
                     if new_notes:
                         memory_view.add_notes(new_notes, file_path=file_path)
                         logger.info(f"{file_path}: added {len(new_notes)} notes")
-                    memory_view.cache_file_analysis(file_path, {
-                        'issues_count': len(issues),
-                        'focus': analysis_focus,
-                    })
 
             except Exception as e:
                 logger.warning(f"Structured analysis failed, falling back to text parsing: {e}")
@@ -225,6 +224,15 @@ Prioritize high-impact issues that affect security, performance, or maintainabil
                     }
                 )
                 issues = self._parse_text_response(response, full_path)
+
+            # Always record that we analyzed this file, regardless of which
+            # path produced the issues. Otherwise the orchestrator's "Already
+            # Analyzed Files" view drifts out of sync.
+            if memory_view is not None:
+                memory_view.cache_file_analysis(file_path, {
+                    'issues_count': len(issues),
+                    'focus': analysis_focus,
+                })
             
             logger.info(f"File analysis complete: {len(issues)} issues found in {file_path}")
             return issues

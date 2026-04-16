@@ -237,13 +237,20 @@ class MemoryView:
         return added
 
     def add_todo(self, content: str, *, target_file: Optional[str] = None) -> Optional[str]:
+        """Add a new todo.
+
+        ``target_file`` is intentionally NOT defaulted to ``self._file_scope``:
+        a todo created during analysis of one file is usually a check that
+        applies elsewhere (e.g. discovered in ``src/auth.py`` but actually
+        about ``test_auth.py``). The creator must opt in to scoping.
+        """
         if not content or not content.strip():
             return None
         todo = Todo(
             id=uuid.uuid4().hex[:8],
             content=content.strip(),
             source=self._role,
-            target_file=target_file if target_file is not None else self._file_scope,
+            target_file=target_file,
         )
         return self._memory._add_todo(todo)
 
@@ -319,27 +326,35 @@ class MemoryView:
         return "\n".join(f"{t.id}: {t.format()}" for t in todos)
 
     def format_for_prompt(self, *, file_path: Optional[str] = None) -> str:
-        """Render the memory as a single block suitable for injecting into a prompt.
+        """Render memory as a single block suitable for injecting into a prompt.
 
-        Only sections with content are included.
+        When ``file_path`` is provided, both items targeting that file AND
+        unscoped (global) items are included; items scoped to other files are
+        omitted to keep the prompt focused. Items relevant to the current
+        file are marked with ``(this file)`` so the agent knows to address
+        them first.
         """
+        def _is_relevant(scope: Optional[str]) -> bool:
+            if file_path is None:
+                return True
+            return scope is None or scope == file_path
+
+        def _scope_marker(scope: Optional[str]) -> str:
+            return " (this file)" if file_path is not None and scope == file_path else ""
+
         sections = []
 
-        notes_block = self.format_notes(file_path=file_path)
-        if notes_block:
-            sections.append(f"### Notes (codebase observations)\n{notes_block}")
+        relevant_notes = [n for n in self.notes() if _is_relevant(n.file_path)]
+        if relevant_notes:
+            lines = [f"- {n.format()}{_scope_marker(n.file_path)}" for n in relevant_notes]
+            sections.append("### Notes (codebase observations)\n" + "\n".join(lines))
 
-        pending = self.format_todos(status="pending", target_file=file_path)
-        in_progress = self.format_todos(status="in_progress", target_file=file_path)
-        if pending or in_progress:
-            todo_lines = []
-            if pending:
-                todo_lines.append(pending)
-            if in_progress:
-                todo_lines.append(in_progress)
+        active = [t for t in self.todos() if t.status in ("pending", "in_progress")
+                  and _is_relevant(t.target_file)]
+        if active:
+            lines = [f"{t.id}: {t.format()}{_scope_marker(t.target_file)}" for t in active]
             sections.append(
-                "### Pending Todos (address these where relevant)\n"
-                + "\n".join(todo_lines)
+                "### Pending Todos (address these where relevant)\n" + "\n".join(lines)
             )
 
         analyzed = self.analyzed_files()
