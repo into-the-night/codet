@@ -16,7 +16,7 @@ from .schemas import (
     IssueSeverity
 )
 from ..core.config import AgentConfig
-from ..core.shared_memory import SharedMemory
+from ..core.shared_memory import SharedMemory, MemoryView, ROLE_FILE_ANALYSIS
 from ..core.repository_tree import RepositoryTreeConstructor as TreeConstructor
 from ..indexer import RulesIndexer
 from ..utils.symbol_extractor import extract_symbols
@@ -31,7 +31,9 @@ class FileAnalysisAgent(BaseAgent):
         super().__init__(config)
         self.max_file_size = 1024 * 1024  # 1MB max file size
         self.max_lines = 1000  # Max lines to analyze per file
-        self.shared_memory = shared_memory  # Shared memory for cross-codebase context
+        # Underlying memory store. Per-call, we derive a file-scoped MemoryView
+        # so each analysis can only write cache entries for the file it owns.
+        self.shared_memory = shared_memory
         
     @property
     def system_prompt(self) -> str:
@@ -53,16 +55,23 @@ Valid Categories (use ONLY these):
 - style: Code formatting issues
 - maintainability: Design issues, coupling, architectural concerns
 
-SHARED MEMORY - Cross-codebase Context:
-When analyzing files, if you discover functions/classes/logic that needs verification elsewhere:
-- Add clear, specific action items to shared memory (append-only)
-- Examples of good action items:
-  * "Check if authenticate() function has tests in test_auth.py"
-  * "Verify error handling for process_payment() is consistent across codebase"
-  * "Ensure API_KEY configuration is validated before use in api_client.py"
-  * "Check if User class methods are properly documented"
+SHARED MEMORY - how to use it:
+You see two kinds of shared memory in the prompt:
+- Notes: durable observations about the codebase (entry points, invariants,
+  where a symbol lives). Append a note in `notes` when you learn something
+  worth telling other agents.
+- Todos: action items other agents should verify. Append to `memory_items`
+  when you discover something that must be checked elsewhere (e.g.
+  "Check if authenticate() has tests in test_auth.py").
 
-Make action items specific with function/class names and relevant file paths when possible.
+Rules for file-analysis agents:
+- You can READ all notes and todos.
+- You can APPEND notes and todos via the response fields.
+- You can only modify todos you authored or that target the file you are
+  analyzing - surfaced transparently by the prompt when applicable.
+- You cannot delete notes, clear memory, or touch other files' cache.
+
+Make items specific: include function/class names and file paths.
 
 Prioritize high-impact issues that affect security, performance, or maintainability."""
         
@@ -137,14 +146,12 @@ Prioritize high-impact issues that affect security, performance, or maintainabil
             List of CodeIssue objects found in the file
         """
         logger.info(f"Analyzing file: {file_path} (focus: {analysis_focus})")
-        
-        # Get shared memory from repository context if available
-        shared_memory = None
-        if repository_context and 'shared_memory' in repository_context:
-            shared_memory = repository_context['shared_memory']
-        elif self.shared_memory:
-            shared_memory = self.shared_memory
-        
+
+        # Build a file-scoped MemoryView. The view enforces that this agent can
+        # only write the cache for this file and only modify todos it owns or
+        # that are targeted at this file.
+        memory_view = self._resolve_memory_view(repository_context, file_path)
+
         full_path = root_path / file_path
         
         if not full_path.exists():
@@ -171,9 +178,9 @@ Prioritize high-impact issues that affect security, performance, or maintainabil
                 content=content,
                 analysis_focus=analysis_focus,
                 repository_context=repository_context,
-                shared_memory=shared_memory
+                memory_view=memory_view,
             )
-            
+
             # Generate structured analysis
             try:
                 structured_response = await self.generate_structured_response(
@@ -186,15 +193,24 @@ Prioritize high-impact issues that affect security, performance, or maintainabil
                         'analysis_type': 'individual_file'
                     }
                 )
-                
+
                 # Convert to CodeIssue objects
                 issues = self._convert_to_code_issues(structured_response.issues, full_path)
-                
-                # Add generated memory items to shared memory
-                if shared_memory and hasattr(structured_response, 'memory_items') and structured_response.memory_items:
-                    shared_memory.add_items(structured_response.memory_items)
-                    logger.info(f"Added {len(structured_response.memory_items)} memory items to shared memory from {file_path}")
-                
+
+                # Persist findings to shared memory through the scoped view.
+                # Notes are about *this* file, so we scope them. Todos are
+                # cross-file checks - leave them unscoped so the agent that
+                # later analyzes the referenced file can see them.
+                if memory_view is not None:
+                    new_todos = getattr(structured_response, 'memory_items', None) or []
+                    new_notes = getattr(structured_response, 'notes', None) or []
+                    if new_todos:
+                        memory_view.add_todos(new_todos)
+                        logger.info(f"{file_path}: added {len(new_todos)} todos")
+                    if new_notes:
+                        memory_view.add_notes(new_notes, file_path=file_path)
+                        logger.info(f"{file_path}: added {len(new_notes)} notes")
+
             except Exception as e:
                 logger.warning(f"Structured analysis failed, falling back to text parsing: {e}")
                 # Fallback to text-based analysis
@@ -208,6 +224,15 @@ Prioritize high-impact issues that affect security, performance, or maintainabil
                     }
                 )
                 issues = self._parse_text_response(response, full_path)
+
+            # Always record that we analyzed this file, regardless of which
+            # path produced the issues. Otherwise the orchestrator's "Already
+            # Analyzed Files" view drifts out of sync.
+            if memory_view is not None:
+                memory_view.cache_file_analysis(file_path, {
+                    'issues_count': len(issues),
+                    'focus': analysis_focus,
+                })
             
             logger.info(f"File analysis complete: {len(issues)} issues found in {file_path}")
             return issues
@@ -216,10 +241,27 @@ Prioritize high-impact issues that affect security, performance, or maintainabil
             logger.error(f"Error analyzing file {file_path}: {e}")
             return []
     
+    def _resolve_memory_view(self, repository_context: Optional[Dict[str, Any]],
+                             file_path: str) -> Optional[MemoryView]:
+        """Return a MemoryView scoped to the given file.
+
+        Accepts either a pre-built MemoryView (preferred) or a raw SharedMemory
+        in ``repository_context['shared_memory']`` for backwards compatibility.
+        """
+        if repository_context and 'shared_memory' in repository_context:
+            obj = repository_context['shared_memory']
+            if isinstance(obj, MemoryView):
+                return obj
+            if isinstance(obj, SharedMemory):
+                return obj.view_for(role=ROLE_FILE_ANALYSIS, file_scope=file_path)
+        if isinstance(self.shared_memory, SharedMemory):
+            return self.shared_memory.view_for(role=ROLE_FILE_ANALYSIS, file_scope=file_path)
+        return None
+
     def _build_file_analysis_prompt(self, file_path: str, content: str,
                                    analysis_focus: str,
                                    repository_context: Optional[Dict[str, Any]],
-                                   shared_memory: Optional[SharedMemory] = None) -> str:
+                                   memory_view: Optional[MemoryView] = None) -> str:
         """Build analysis prompt for a specific file"""
         file_extension = Path(file_path).suffix.lower()
         language = self._get_language(file_extension)
@@ -287,16 +329,19 @@ Follow these rules carefully during analysis:
             except Exception as e:
                 logger.error(f"Error querying rules RAG: {e}")
         
-        # Add shared memory context if available
-        if shared_memory and len(shared_memory) > 0:
-            memory_items = shared_memory.format_items()
-            prompt += f"""
+        # Add shared memory context (notes + todos) if available
+        if memory_view is not None:
+            memory_block = memory_view.format_for_prompt(file_path=file_path)
+            if memory_block:
+                prompt += f"""
 
-SHARED MEMORY - Existing Context:
-{memory_items}
+SHARED MEMORY:
+{memory_block}
 
-Review these items for context about what needs to be checked across the codebase."""
-        
+Use notes as grounded context. If a todo targets this file, address it and
+include a concise note in your `notes` response so other agents see the
+resolution."""
+
         prompt += f"""
 
 FILE CONTENT:
@@ -304,11 +349,14 @@ FILE CONTENT:
 
 Provide detailed issues with exact line numbers, clear descriptions, and actionable suggestions.
 
-IMPORTANT: Generate memory_items for cross-codebase verification needs:
-- Include specific function/class names and suggested files to check
-- Examples: "Check if authenticate() has tests in test_auth.py", "Verify User class usage in user_service.py"
+RESPONSE FIELDS:
+- `issues`: the code quality issues you found in this file.
+- `notes`: durable observations about this file to share with other agents
+  (e.g. "authenticate() at line 45 is the single login entry point").
+- `memory_items`: todos (cross-file checks) for other agents to pick up
+  (e.g. "Check if authenticate() has tests in test_auth.py").
 """
-        
+
         return prompt
 
     def _build_file_query_prompt(self, *, file_path: str, content: str, question: str,

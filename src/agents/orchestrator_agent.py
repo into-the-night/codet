@@ -18,7 +18,7 @@ from .schemas import (
 from ..core.config import AgentConfig, RedisConfig
 from .tools import AnalyzeFile, QueryCodebase, QueryFile
 from ..core.message_history import MessageRole
-from ..core.shared_memory import SharedMemory
+from ..core.shared_memory import SharedMemory, MemoryView, ROLE_ORCHESTRATOR
 from ..core.repository_tree import RepositoryTreeConstructor as TreeConstructor
 
 logger = logging.getLogger(__name__)
@@ -49,7 +49,13 @@ class OrchestratorAgent(BaseAgent):
         self.chat_answer = None  # Store final answer for chat mode
         self._cached_analysis_result = None  # Store cached analysis for chat mode
         self.session_id = session_id  # Store message key for chat mode
-        self.shared_memory = shared_memory  # Shared memory for cross-codebase context
+        self.shared_memory = shared_memory
+        # Orchestrator has the privileged role: can prune notes, remove todos,
+        # reset memory between sessions. All other agents run through a more
+        # restricted view.
+        self.memory: Optional[MemoryView] = (
+            shared_memory.view_for(role=ROLE_ORCHESTRATOR) if shared_memory else None
+        )
         
         # Event callback for streaming updates
         self._event_callback = None
@@ -80,19 +86,21 @@ WORKFLOW:
 2. Wait for tool results
 3. Return {"issues": [...]} with findings
 
-SHARED MEMORY:
-- Review shared memory for pending action items before selecting files
-- Prioritize analyzing files related to pending action items
-- After analyzing files that address action items, you can remove completed items
-- Add new items when discovering cross-file dependencies or concerns
-- Generate memory_items in your response for cross-codebase context
+SHARED MEMORY (two layers):
+- Notes: durable codebase observations accumulated by all agents. Use them
+  as grounded context - don't re-derive what's already there.
+- Todos: pending action items with a status (pending/in_progress/done).
+  Before picking a file, scan pending todos; if any target a file, analyze
+  that file next so the todo can be resolved.
 
-Examples of good memory items:
-  * "Check if authenticate() function has tests in test_auth.py"
-  * "Verify error handling in payment_processor.py matches validation.py"
-  * "Ensure User class methods are documented"
+As the orchestrator you have full control over memory:
+- You can add notes and todos.
+- You can remove stale notes and completed todos.
+- Use `memory_items` in your response for new todos, `notes` for new
+  observations.
 
 File Priority:
+- Files referenced by pending todos
 - Entry points (main.py, index.js, app.py)
 - Core logic and configuration files
 - Large/complex files
@@ -118,11 +126,11 @@ When a user asks about the codebase:
 4. Provide comprehensive answers with code details
 
 SHARED MEMORY:
-- Review shared memory for context from previous analysis steps
-- Add action items when discovering related concerns across files
-- Generate memory_items in your response for cross-codebase context
-
-Examples: "Check if process_order() has proper error handling", "Verify API authentication is consistent"
+- Notes give you durable context discovered in past steps - consult them
+  before re-reading files.
+- Pending todos point to known gaps; address any that are relevant before
+  answering.
+- Add new observations via `notes` and cross-file checks via `memory_items`.
 """
         
         # Add query_codebase to prompt if available
@@ -233,17 +241,18 @@ FILES:
 {TreeConstructor.format_file_list(all_files)}"""
 
         # Add shared memory content if available
-        if self.shared_memory and len(self.shared_memory) > 0:
-            memory_items = self.shared_memory.format_items()
-            prompt += f"""
+        if self.memory is not None:
+            memory_block = self.memory.format_for_prompt()
+            if memory_block:
+                prompt += f"""
 
-SHARED MEMORY - Pending Action Items:
-{memory_items}
+SHARED MEMORY:
+{memory_block}
 
-Priority: Address these action items first by analyzing relevant files."""
-        
+Priority: if a pending todo targets a file, analyze that file first."""
+
         prompt += "\n\nUse analyze_file to examine critical files (entry points, configs, core logic).\nAfter analysis, return: {\"issues\": [Issues from the analysis with proper schema]}"
-        
+
         return prompt
     
     
@@ -340,12 +349,13 @@ FILES:
             prompt += f"\n\nPrevious analysis: {issues_count} issues found"
 
         # Add shared memory content if available
-        if self.shared_memory and len(self.shared_memory) > 0:
-            memory_items = self.shared_memory.format_items()
-            prompt += f"""
+        if self.memory is not None:
+            memory_block = self.memory.format_for_prompt()
+            if memory_block:
+                prompt += f"""
 
-SHARED MEMORY - Context from Previous Analysis:
-{memory_items}"""
+SHARED MEMORY:
+{memory_block}"""
 
         prompt += "\n\nYou can query relevant files if needed using the tools. Focus on files related to the user's question ONLY. DO NOT ASSUME ANYTHING."""
         
