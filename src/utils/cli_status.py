@@ -102,12 +102,40 @@ class CLIProcessingStatus:
         """Callback handler for agent events - matches the expected signature"""
         self.add_event(event_type, data)
     
+    MEMORY_ACTION_ICONS = {
+        'todo_added':      '➕',
+        'todo_claimed':    '🔄',
+        'todo_completed':  '✅',
+        'todo_reopened':   '↩️ ',
+        'todo_removed':    '🗑️ ',
+        'note_added':      '📝',
+        'note_removed':    '🗑️ ',
+        'reset':           '♻️ ',
+    }
+
+    MEMORY_ACTION_COLORS = {
+        'todo_added':      'cyan',
+        'todo_claimed':    'yellow',
+        'todo_completed':  'bright_green',
+        'todo_reopened':   'yellow',
+        'todo_removed':    'dim',
+        'note_added':      'cyan',
+        'note_removed':    'dim',
+        'reset':           'dim',
+    }
+
     def _format_event(self, event: ProcessingEvent) -> Text:
         """Format a single event for display"""
-        icon = self.EVENT_ICONS.get(event.type, '📌')
-        color = self.EVENT_COLORS.get(event.type, 'white')
-        
         text = Text()
+
+        if event.type == 'memory_update':
+            action = event.data.get('action', '')
+            icon = self.MEMORY_ACTION_ICONS.get(action, self.EVENT_ICONS['memory_update'])
+            color = self.MEMORY_ACTION_COLORS.get(action, self.EVENT_COLORS['memory_update'])
+        else:
+            icon = self.EVENT_ICONS.get(event.type, '📌')
+            color = self.EVENT_COLORS.get(event.type, 'white')
+
         text.append(f" {icon} ", style=color)
         
         # Format based on event type
@@ -145,12 +173,7 @@ class CLIProcessingStatus:
                 text.append("...", style="dim")
         
         elif event.type == 'memory_update':
-            action = event.data.get('action', 'Updated')
-            message = event.data.get('message', '')[:50]
-            text.append(f"{action}: ", style=f"bold {color}")
-            text.append(message, style="italic")
-            if len(event.data.get('message', '')) > 50:
-                text.append("...", style="dim")
+            self._format_memory_update(event, text)
         
         elif event.type == 'search':
             query = event.data.get('query', '')[:40]
@@ -180,9 +203,78 @@ class CLIProcessingStatus:
         # Add timestamp
         time_str = event.timestamp.strftime("%H:%M:%S")
         text.append(f"  [{time_str}]", style="dim")
-        
+
         return text
-    
+
+    def _format_memory_update(self, event: ProcessingEvent, text: Text) -> None:
+        """Render a memory_update event.
+
+        Todo lifecycle events render as a checkbox-style line so the user can
+        visually track add/claim/complete transitions. Note changes and resets
+        render as "Memory Updated: <action>" so the user sees the orchestrator
+        growing or pruning its memory.
+        """
+        data = event.data
+        action = data.get('action', '')
+        role = data.get('role', '')
+        content = data.get('content', '')
+        target = data.get('target_file')
+        color = self.MEMORY_ACTION_COLORS.get(action, self.EVENT_COLORS['memory_update'])
+
+        role_tag = f"[{role}] " if role else ""
+
+        if action == 'todo_added':
+            text.append("Todo added ", style=f"bold {color}")
+            text.append(role_tag, style="dim")
+            text.append(f"[ ] {content}", style=color)
+            if target:
+                text.append(f"  → {target}", style="dim")
+
+        elif action == 'todo_claimed':
+            text.append("Todo in progress ", style=f"bold {color}")
+            text.append(role_tag, style="dim")
+            text.append(f"[~] {content}", style=color)
+
+        elif action == 'todo_completed':
+            text.append("Todo completed ", style=f"bold {color}")
+            text.append(role_tag, style="dim")
+            text.append(f"[x] {content}", style=f"{color} strike")
+
+        elif action == 'todo_reopened':
+            text.append("Todo reopened ", style=f"bold {color}")
+            text.append(role_tag, style="dim")
+            text.append(f"[ ] {content}", style=color)
+
+        elif action == 'todo_removed':
+            text.append("Memory updated: ", style=f"bold {color}")
+            text.append(role_tag, style="dim")
+            text.append(f"todo removed - {content}", style=f"{color} strike")
+
+        elif action == 'note_added':
+            text.append("Memory updated: ", style=f"bold {color}")
+            text.append(role_tag, style="dim")
+            text.append(f"note added - {content}", style=f"italic {color}")
+
+        elif action == 'note_removed':
+            text.append("Memory updated: ", style=f"bold {color}")
+            text.append(role_tag, style="dim")
+            text.append(f"note removed - {content}", style=f"italic {color}")
+
+        elif action == 'reset':
+            notes_cleared = data.get('notes_cleared', 0)
+            todos_cleared = data.get('todos_cleared', 0)
+            files_cleared = data.get('files_cleared', 0)
+            text.append("Memory updated: ", style=f"bold {color}")
+            text.append(
+                f"reset ({notes_cleared} notes, {todos_cleared} todos, "
+                f"{files_cleared} file entries cleared)",
+                style=f"italic {color}",
+            )
+
+        else:
+            text.append("Memory updated: ", style=f"bold {color}")
+            text.append(f"{action} {content}", style=color)
+
     def _build_display(self) -> Panel:
         """Build the rich display panel"""
         visible_events = self.events[-self.max_visible_events:]
@@ -280,6 +372,8 @@ class SimpleProcessingStatus:
     
     EVENT_ICONS = CLIProcessingStatus.EVENT_ICONS
     EVENT_COLORS = CLIProcessingStatus.EVENT_COLORS
+    MEMORY_ACTION_ICONS = CLIProcessingStatus.MEMORY_ACTION_ICONS
+    MEMORY_ACTION_COLORS = CLIProcessingStatus.MEMORY_ACTION_COLORS
     
     def __init__(self, console: Optional[Console] = None):
         self.console = console or Console()
@@ -290,15 +384,24 @@ class SimpleProcessingStatus:
     def add_event(self, event_type: str, data: dict):
         """Add and immediately print a new processing event"""
         self.event_count += 1
+
+        if event_type == 'memory_update':
+            action = data.get('action', '')
+            icon = self.MEMORY_ACTION_ICONS.get(action, self.EVENT_ICONS['memory_update'])
+            color = self.MEMORY_ACTION_COLORS.get(action, self.EVENT_COLORS['memory_update'])
+            msg = self._memory_update_message(data)
+            self.console.print(f"  [{color}]{icon}[/{color}] {msg}")
+            return
+
         icon = self.EVENT_ICONS.get(event_type, '📌')
         color = self.EVENT_COLORS.get(event_type, 'white')
-        
+
         # Update tracking
         if event_type == 'iteration':
             self.current_iteration = data.get('current', self.current_iteration)
         elif event_type == 'file_analysis':
             self.files_analyzed += 1
-        
+
         # Format message
         if event_type == 'file_analysis':
             file_path = data.get('file_path', 'unknown')
@@ -314,16 +417,43 @@ class SimpleProcessingStatus:
             msg = f"Iteration {current}/{max_iter} ({files} files analyzed)"
         elif event_type == 'reasoning':
             msg = data.get('message', '')[:80]
-        elif event_type == 'memory_update':
-            action = data.get('action', 'Updated')
-            message = data.get('message', '')[:50]
-            msg = f"{action}: {message}"
         elif event_type == 'thinking':
             msg = data.get('message', 'Processing...')
         else:
             msg = data.get('message', str(data))[:60]
-        
+
         self.console.print(f"  [{color}]{icon}[/{color}] {msg}")
+
+    @staticmethod
+    def _memory_update_message(data: dict) -> str:
+        action = data.get('action', '')
+        role = data.get('role', '')
+        content = data.get('content', '')
+        target = data.get('target_file')
+        role_tag = f"[{role}] " if role else ""
+        if action == 'todo_added':
+            suffix = f"  → {target}" if target else ""
+            return f"Todo added {role_tag}[ ] {content}{suffix}"
+        if action == 'todo_claimed':
+            return f"Todo in progress {role_tag}[~] {content}"
+        if action == 'todo_completed':
+            return f"Todo completed {role_tag}[x] {content}"
+        if action == 'todo_reopened':
+            return f"Todo reopened {role_tag}[ ] {content}"
+        if action == 'todo_removed':
+            return f"Memory updated: {role_tag}todo removed - {content}"
+        if action == 'note_added':
+            return f"Memory updated: {role_tag}note added - {content}"
+        if action == 'note_removed':
+            return f"Memory updated: {role_tag}note removed - {content}"
+        if action == 'reset':
+            return (
+                f"Memory updated: reset "
+                f"({data.get('notes_cleared', 0)} notes, "
+                f"{data.get('todos_cleared', 0)} todos, "
+                f"{data.get('files_cleared', 0)} file entries cleared)"
+            )
+        return f"Memory updated: {action} {content}".strip()
     
     def on_event(self, event_type: str, data: dict):
         """Callback handler for agent events"""

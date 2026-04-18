@@ -26,9 +26,11 @@ import uuid
 from dataclasses import dataclass, field
 from datetime import datetime
 from threading import RLock
-from typing import Any, Dict, List, Literal, Optional
+from typing import Any, Callable, Dict, List, Literal, Optional
 
 logger = logging.getLogger(__name__)
+
+EventCallback = Callable[[str, Dict[str, Any]], None]
 
 TodoStatus = Literal["pending", "in_progress", "done"]
 
@@ -77,7 +79,26 @@ class SharedMemory:
         self._todos: Dict[str, Todo] = {}
         self._file_cache: Dict[str, Dict[str, Any]] = {}
         self._lock = RLock()
+        self._event_callback: Optional[EventCallback] = None
         logger.info("SharedMemory initialized")
+
+    # --- Event wiring --------------------------------------------------
+
+    def set_event_callback(self, callback: Optional[EventCallback]) -> None:
+        """Register a callback to receive memory_update events.
+
+        Signature: callback(event_type: str, data: dict).
+        """
+        self._event_callback = callback
+
+    def _emit(self, action: str, **data: Any) -> None:
+        cb = self._event_callback
+        if cb is None:
+            return
+        try:
+            cb("memory_update", {"action": action, **data})
+        except Exception as e:
+            logger.warning(f"memory event callback failed: {e}")
 
     # --- Internal state mutation (invoked through MemoryView) -----------
 
@@ -88,15 +109,25 @@ class SharedMemory:
                     return False
             self._notes.append(note)
             logger.debug(f"note+ [{note.source}] {note.content}")
-            return True
+        self._emit(
+            "note_added",
+            role=note.source,
+            content=note.content,
+            file_path=note.file_path,
+            tags=list(note.tags),
+        )
+        return True
 
     def _remove_note(self, content: str) -> bool:
         with self._lock:
             for i, n in enumerate(self._notes):
                 if n.content == content:
-                    del self._notes[i]
-                    return True
-            return False
+                    removed = self._notes.pop(i)
+                    break
+            else:
+                return False
+        self._emit("note_removed", role=removed.source, content=removed.content)
+        return True
 
     def _get_notes(self, *, tags: Optional[List[str]] = None,
                    file_path: Optional[str] = None) -> List[Note]:
@@ -115,7 +146,14 @@ class SharedMemory:
                     return existing.id
             self._todos[todo.id] = todo
             logger.debug(f"todo+ [{todo.source}] {todo.content}")
-            return todo.id
+        self._emit(
+            "todo_added",
+            role=todo.source,
+            id=todo.id,
+            content=todo.content,
+            target_file=todo.target_file,
+        )
+        return todo.id
 
     def _update_todo(self, todo_id: str, *, status: Optional[TodoStatus] = None,
                      owner: Optional[str] = None) -> bool:
@@ -123,16 +161,42 @@ class SharedMemory:
             todo = self._todos.get(todo_id)
             if not todo:
                 return False
+            prev_status = todo.status
             if status is not None:
                 todo.status = status
             if owner is not None:
                 todo.owner = owner
             todo.updated_at = datetime.now().isoformat()
-            return True
+            snapshot = (todo.id, todo.content, todo.target_file, todo.status, todo.owner)
+        _id, _content, _target, _status, _owner = snapshot
+        if status is not None and status != prev_status:
+            action = {
+                "in_progress": "todo_claimed",
+                "done": "todo_completed",
+                "pending": "todo_reopened",
+            }.get(_status, "todo_updated")
+            self._emit(
+                action,
+                role=_owner or "",
+                id=_id,
+                content=_content,
+                target_file=_target,
+                status=_status,
+            )
+        return True
 
     def _remove_todo(self, todo_id: str) -> bool:
         with self._lock:
-            return self._todos.pop(todo_id, None) is not None
+            removed = self._todos.pop(todo_id, None)
+        if removed is None:
+            return False
+        self._emit(
+            "todo_removed",
+            role=removed.source,
+            id=removed.id,
+            content=removed.content,
+        )
+        return True
 
     def _get_todos(self, *, status: Optional[TodoStatus] = None,
                    target_file: Optional[str] = None) -> List[Todo]:
@@ -161,10 +225,19 @@ class SharedMemory:
     def clear(self) -> None:
         """Reset memory for a new analysis session."""
         with self._lock:
+            note_count = len(self._notes)
+            todo_count = len(self._todos)
+            file_count = len(self._file_cache)
             self._notes.clear()
             self._todos.clear()
             self._file_cache.clear()
             logger.info("SharedMemory cleared for new session")
+        self._emit(
+            "reset",
+            notes_cleared=note_count,
+            todos_cleared=todo_count,
+            files_cleared=file_count,
+        )
 
     def snapshot(self) -> Dict[str, Any]:
         with self._lock:

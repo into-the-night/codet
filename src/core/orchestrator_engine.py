@@ -542,6 +542,10 @@ class OrchestratorEngine:
         # Also set the callback on the orchestrator agent if it exists
         if self.orchestrator_agent:
             self.orchestrator_agent.set_event_callback(callback)
+        # Wire memory mutations through the same event stream so the UI can
+        # render note/todo changes as they happen.
+        if self.shared_memory is not None:
+            self.shared_memory.set_event_callback(callback)
     
     def _emit_event(self, event_type: str, data: dict):
         """Emit an event to the callback if one is set"""
