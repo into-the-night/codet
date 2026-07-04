@@ -292,12 +292,12 @@ def analyze(path, output, format, config, use_local, ollama_model, index, collec
         console.print("[red]❌ Error: Orchestrator analysis could not be enabled.[/red]")
         return
     
-    # Create and use rich processing status for analysis
-    processing_status = CLIProcessingStatus(console=console)
-    
+    # Create and use processing status for analysis.
+    processing_status = SimpleProcessingStatus(console=console)
+
     # Set up event callback before starting analysis
     engine.set_event_callback(processing_status.on_event)
-    
+
     # Start the processing status display
     processing_status.start(title="🎯 Orchestrator Analysis")
     
@@ -392,8 +392,8 @@ def analyze(path, output, format, config, use_local, ollama_model, index, collec
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
     
-    # Create processing status display
-    processing_status = CLIProcessingStatus(console=console)
+    # Create processing status display (line-by-line, see note above)
+    processing_status = SimpleProcessingStatus(console=console)
 
     # Chat loop
     while True:
