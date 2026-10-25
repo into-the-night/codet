@@ -58,6 +58,20 @@ class BaseAgent:
             HumanMessagePromptTemplate.from_template("{user_prompt}")
         ])
     
+    @staticmethod
+    def _response_text(response: Any) -> str:
+        """Return a model response as plain text.
+
+        Newer Gemini models return content as a list of parts instead of a string.
+        """
+        content = response.content if hasattr(response, 'content') else str(response)
+        if isinstance(content, list):
+            content = ''.join(
+                part if isinstance(part, str) else part.get('text', '')
+                for part in content
+            )
+        return content
+
     @property
     def system_prompt(self) -> str:
         """System prompt for the agent - to be overridden by subclasses"""
@@ -151,7 +165,7 @@ class BaseAgent:
             ]
             
             response = await self.llm.ainvoke(messages)
-            response_text = response.content if hasattr(response, 'content') else str(response)
+            response_text = self._response_text(response)
             await self._add_to_cache(cache_key, response_text)
             
             return response_text
@@ -196,7 +210,7 @@ class BaseAgent:
             response = await self.llm.ainvoke(messages)
 
             # Extract content
-            response_text = response.content if hasattr(response, 'content') else str(response)
+            response_text = self._response_text(response)
             
             # Parse the structured response
             try:
@@ -311,7 +325,7 @@ class BaseAgent:
                         messages.append(ToolMessage(content=f"Error executing tool: {str(e)}", tool_call_id=tool_call_id))
             else:
                 # No tool calls, this is the final response
-                return response.content
+                return self._response_text(response)
 
 
     
